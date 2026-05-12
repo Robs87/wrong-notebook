@@ -19,6 +19,15 @@ COPY . .
 # Install OpenSSL for Prisma
 RUN apk add --no-cache openssl
 
+# Download Prisma engines for all target architectures
+ARG TARGETPLATFORM
+RUN case "${TARGETPLATFORM}" in \
+    "linux/amd64") echo "Building for amd64" ;; \
+    "linux/arm64") echo "Building for arm64" ;; \
+    "linux/arm/v7") echo "Building for arm/v7" ;; \
+    *) echo "Building for unknown platform: ${TARGETPLATFORM}" ;; \
+    esac
+
 # Generate Prisma Client and Seed Database
 # We temporarily set DATABASE_URL to a local file for the build process to generate the file
 ENV DATABASE_URL="file:/app/prisma/dev.db"
