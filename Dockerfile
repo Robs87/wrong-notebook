@@ -8,7 +8,13 @@ WORKDIR /app
 
 # Install dependencies based on the preferred package manager
 COPY package.json package-lock.json ./
-RUN npm ci
+# Skip Prisma engine download during npm ci (engines are copied manually for arm/v7)
+ARG TARGETPLATFORM
+RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
+      PRISMA_SKIP_POSTINSTALL_GENERATE=1 npm ci ;\
+    else \
+      npm ci ;\
+    fi
 
 # Rebuild the source code only when needed
 FROM base AS builder
@@ -24,7 +30,14 @@ ARG TARGETPLATFORM
 RUN case "${TARGETPLATFORM}" in \
     "linux/amd64") echo "Building for amd64" ;; \
     "linux/arm64") echo "Building for arm64" ;; \
-    "linux/arm/v7") echo "Building for arm/v7" ;; \
+    "linux/arm/v7") \
+        echo "Building for arm/v7 - downloading pre-compiled engines" ;\
+        mkdir -p /app/engines/armv7 ;\
+        curl -L -o /app/engines/armv7/libquery_engine.so.node "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/libquery_engine.so.node" ;\
+        curl -L -o /app/engines/armv7/query-engine "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/query-engine" ;\
+        curl -L -o /app/engines/armv7/schema-engine "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/schema-engine" ;\
+        curl -L -o /app/engines/armv7/prisma-fmt "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/prisma-fmt" ;\
+        ;; \
     *) echo "Building for unknown platform: ${TARGETPLATFORM}" ;; \
     esac
 
@@ -32,11 +45,22 @@ RUN case "${TARGETPLATFORM}" in \
 # We temporarily set DATABASE_URL to a local file for the build process to generate the file
 ENV DATABASE_URL="file:/app/prisma/dev.db"
 
+# For armv7 builds, point Prisma to the pre-compiled engines before generate
+ARG TARGETPLATFORM
+
 # Pre-compile runtime scripts FIRST (needed for tag seeding)
 RUN npx tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020
 
 # Initialize database: generate client, run migrations, seed admin user, seed system tags
-RUN npx prisma generate \
+# For armv7, set engine env vars inline so prisma generate can find them
+RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
+      PRISMA_QUERY_ENGINE_LIBRARY="/app/engines/armv7/libquery_engine.so.node" \
+      PRISMA_SCHEMA_ENGINE_BINARY="/app/engines/armv7/schema-engine" \
+      PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 \
+      npx prisma generate ;\
+    else \
+      npx prisma generate ;\
+    fi \
     && npx prisma migrate deploy \
     && npx prisma db seed \
     && node ./dist-scripts/scripts/rebuild-system-tags.js
@@ -66,6 +90,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modul
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/prisma ./node_modules/prisma
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
 
+# Copy armv7 Prisma engines for runtime (if applicable)
+COPY --from=builder /tmp/engines/armv7 /app/engines/armv7
+
 COPY --from=builder /app/public ./public
 
 # Automatically leverage output traces to reduce image size
@@ -94,10 +121,17 @@ ENV PORT=3000
 # set hostname to localhost
 ENV HOSTNAME="0.0.0.0"
 
-# Environment variables 
+# Environment variables
 # Point to the persistent data location
 ENV DATABASE_URL="file:/app/data/dev.db"
 ENV AUTH_TRUST_HOST=true
+
+# Prisma armv7 engine paths (used when running on arm/v7)
+ENV PRISMA_QUERY_ENGINE_LIBRARY="/app/engines/armv7/libquery_engine.so.node"
+ENV PRISMA_SCHEMA_ENGINE_BINARY="/app/engines/armv7/schema-engine"
+ENV PRISMA_QUERY_ENGINE_BINARY="/app/engines/armv7/query-engine"
+ENV PRISMA_FMT_BINARY="/app/engines/armv7/prisma-fmt"
+ENV PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1
 
 # Use entrypoint script to handle DB initialization
 ENTRYPOINT ["./docker-entrypoint.sh"]
