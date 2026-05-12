@@ -33,37 +33,43 @@ RUN case "${TARGETPLATFORM}" in \
     "linux/arm/v7") \
         echo "Building for arm/v7 - downloading pre-compiled engines" ;\
         mkdir -p /app/engines/armv7 ;\
-        curl -L -o /app/engines/armv7/libquery_engine.so.node "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/libquery_engine.so.node" ;\
-        curl -L -o /app/engines/armv7/query-engine "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/query-engine" ;\
-        curl -L -o /app/engines/armv7/schema-engine "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/schema-engine" ;\
-        curl -L -o /app/engines/armv7/prisma-fmt "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/prisma-fmt" ;\
+        curl -L -o /app/engines/armv7/libquery_engine-linux-arm-openssl-3.0.x.so.node "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/libquery_engine.so.node" ;\
+        curl -L -o /app/engines/armv7/schema-engine-linux-arm "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/schema-engine" ;\
+        curl -L -o /app/engines/armv7/query-engine-linux-arm "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/query-engine" ;\
+        curl -L -o /app/engines/armv7/prisma-fmt-linux-arm "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/prisma-fmt" ;\
         ;; \
     *) echo "Building for unknown platform: ${TARGETPLATFORM}" ;; \
     esac
+
+# For armv7 builds, remove linux-arm-openssl-3.0.x from binaryTargets temporarily
+# to prevent prisma generate in multi-arch build from trying to download it,
+# then restore it after generate
+RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
+      sed -i 's/"linux-arm-openssl-3.0.x"//' prisma/schema.prisma ;\
+      sed -i 's/,\s*,/,/' prisma/schema.prisma ;\
+    fi
 
 # Generate Prisma Client and Seed Database
 # We temporarily set DATABASE_URL to a local file for the build process to generate the file
 ENV DATABASE_URL="file:/app/prisma/dev.db"
 
-# For armv7 builds, point Prisma to the pre-compiled engines before generate
-ARG TARGETPLATFORM
-
 # Pre-compile runtime scripts FIRST (needed for tag seeding)
 RUN npx tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020
 
 # Initialize database: generate client, run migrations, seed admin user, seed system tags
-# For armv7, set engine env vars inline so prisma generate can find them
-RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
-      PRISMA_QUERY_ENGINE_LIBRARY="/app/engines/armv7/libquery_engine.so.node" \
-      PRISMA_SCHEMA_ENGINE_BINARY="/app/engines/armv7/schema-engine" \
-      PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 \
-      npx prisma generate ;\
-    else \
-      npx prisma generate ;\
-    fi \
+RUN npx prisma generate \
     && npx prisma migrate deploy \
     && npx prisma db seed \
     && node ./dist-scripts/scripts/rebuild-system-tags.js
+
+# For armv7 builds: restore arm binaryTarget in schema and copy engine files
+# so the runner can find them at runtime
+RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
+      sed -i 's/binaryTargets = \["native", "linux-musl-openssl-3.0.x"\]/binaryTargets = ["native", "linux-musl-openssl-3.0.x", "linux-arm-openssl-3.0.x"]/' prisma/schema.prisma ;\
+      mkdir -p /app/node_modules/.prisma/client ;\
+      cp /app/engines/armv7/libquery_engine-linux-arm-openssl-3.0.x.so.node /app/node_modules/.prisma/client/ ;\
+      cp /app/engines/armv7/schema-engine-linux-arm /app/node_modules/.prisma/client/ ;\
+    fi
 
 # Next.js collects completely anonymous telemetry data about general usage.
 # Learn more here: https://nextjs.org/telemetry
@@ -89,9 +95,6 @@ RUN apk add --no-cache su-exec openssl \
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/prisma ./node_modules/prisma
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
-
-# Copy armv7 Prisma engines for runtime (if applicable)
-COPY --from=builder /tmp/engines/armv7 /app/engines/armv7
 
 COPY --from=builder /app/public ./public
 
@@ -126,11 +129,7 @@ ENV HOSTNAME="0.0.0.0"
 ENV DATABASE_URL="file:/app/data/dev.db"
 ENV AUTH_TRUST_HOST=true
 
-# Prisma armv7 engine paths (used when running on arm/v7)
-ENV PRISMA_QUERY_ENGINE_LIBRARY="/app/engines/armv7/libquery_engine.so.node"
-ENV PRISMA_SCHEMA_ENGINE_BINARY="/app/engines/armv7/schema-engine"
-ENV PRISMA_QUERY_ENGINE_BINARY="/app/engines/armv7/query-engine"
-ENV PRISMA_FMT_BINARY="/app/engines/armv7/prisma-fmt"
+# Ignore checksum errors for armv7 engines (third-party compiled)
 ENV PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1
 
 # Use entrypoint script to handle DB initialization
