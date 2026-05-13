@@ -30,9 +30,9 @@ RUN sed -i 's/ "linux-arm-openssl-3.0.x"//' prisma/schema.prisma && \
 RUN if [ -d /app/engines/armv7 ]; then \
       mkdir -p /app/node_modules/@prisma/engines ;\
       cp /app/engines/armv7/libquery_engine-linux-arm-openssl-3.0.x.so.node /app/node_modules/@prisma/engines/libquery_engine-linux-arm-openssl-3.0.x.so.node ;\
-      cp /app/engines/armv7/schema-engine-linux-arm /app/node_modules/@prisma/engines/schema-engine-linux-arm-openssl-3.0.x ;\
-      cp /app/engines/armv7/query-engine-linux-arm /app/node_modules/@prisma/engines/query-engine-linux-arm-openssl-3.0.x ;\
-      cp /app/engines/armv7/prisma-fmt-linux-arm /app/node_modules/@prisma/engines/prisma-fmt-linux-arm-openssl-3.0.x ;\
+      cp /app/engines/armv7/schema-engine-linux-arm-openssl-3.0.x /app/node_modules/@prisma/engines/schema-engine-linux-arm-openssl-3.0.x ;\
+      cp /app/engines/armv7/query-engine-linux-arm-openssl-3.0.x /app/node_modules/@prisma/engines/query-engine-linux-arm-openssl-3.0.x ;\
+      cp /app/engines/armv7/prisma-fmt-linux-arm-openssl-3.0.x /app/node_modules/@prisma/engines/prisma-fmt-linux-arm-openssl-3.0.x ;\
       echo "armv7 engines copied" ;\
     fi
 
