@@ -46,11 +46,14 @@ RUN sed -i 's/,,/,/' prisma/schema.prisma
 ENV DATABASE_URL="file:/app/prisma/dev.db"
 
 # For armv7: engines are already in @prisma/engines/ (copied above).
-# PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 makes Prisma skip download when
-# .sha256 checksum file is missing (which it is for our pre-compiled engines).
+# Point Prisma to the pre-compiled engine files via env vars to skip download:
+#   PRISMA_QUERY_ENGINE_LIBRARY -> libquery-engine (QueryEngineLibrary binary)
+#   PRISMA_SCHEMA_ENGINE_BINARY -> schema-engine (SchemaEngineBinary)
+# When these env vars are set AND the file exists, Prisma skips download entirely.
+# Also remove arm binaryTarget from schema so Prisma doesn't try to download it.
 RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
-      PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 \
-      PRISMA_CLI_BINARY_TARGETS="native" \
+      PRISMA_QUERY_ENGINE_LIBRARY="/app/node_modules/@prisma/engines/libquery_engine-linux-arm-openssl-3.0.x.so.node" \
+      PRISMA_SCHEMA_ENGINE_BINARY="/app/node_modules/@prisma/engines/schema-engine-linux-arm-openssl-3.0.x" \
       npx prisma generate ;\
     else \
       npx prisma generate ;\
