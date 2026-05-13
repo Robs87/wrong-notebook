@@ -60,6 +60,15 @@ RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
     fi
 
 # Migrate and seed
+# Debug: list engine files before migrate
+RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
+      echo "=== Engine files in @prisma/engines ===" ;\
+      ls -la /app/node_modules/@prisma/engines/ ;\
+      echo "=== Engine files in .prisma/client ===" ;\
+      ls -la /app/node_modules/.prisma/client/*.so.node 2>/dev/null || echo "no .so.node files" ;\
+      echo "=== Prisma schema binaryTargets ===" ;\
+      grep binaryTargets /app/prisma/schema.prisma ;\
+    fi
 RUN npx prisma migrate deploy && npx prisma db seed
 
 # Pre-compile runtime scripts (needs PrismaClient from generate above)
