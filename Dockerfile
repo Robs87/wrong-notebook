@@ -59,17 +59,9 @@ RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
       npx prisma generate ;\
     fi
 
-# Migrate and seed
-# Debug: list engine files before migrate
-RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
-      echo "=== Engine files in @prisma/engines ===" ;\
-      ls -la /app/node_modules/@prisma/engines/ ;\
-      echo "=== Engine files in .prisma/client ===" ;\
-      ls -la /app/node_modules/.prisma/client/*.so.node 2>/dev/null || echo "no .so.node files" ;\
-      echo "=== Prisma schema binaryTargets ===" ;\
-      grep binaryTargets /app/prisma/schema.prisma ;\
-    fi
-RUN npx prisma migrate deploy && npx prisma db seed
+# NOTE: migrate deploy and db seed are NOT run during build.
+# They are handled by docker-entrypoint.sh at container startup.
+# This avoids issues with Prisma CLI tools (schema-engine) under QEMU emulation on armv7.
 
 # Pre-compile runtime scripts (needs PrismaClient from generate above)
 RUN npx tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020
@@ -140,7 +132,7 @@ ENV HOSTNAME="0.0.0.0"
 ENV DATABASE_URL="file:/app/data/dev.db"
 ENV AUTH_TRUST_HOST=true
 
-# Ignore checksum errors for armv7 engines (third-party compiled)
+# Ignore checksum errors for third-party engines
 ENV PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1
 
 # Use entrypoint script to handle DB initialization

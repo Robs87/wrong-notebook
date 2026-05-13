@@ -1,6 +1,12 @@
 #!/bin/sh
 set -e
 
+# For armv7: point Prisma to pre-compiled engine files to skip download
+if [ -f /app/node_modules/@prisma/engines/libquery_engine-linux-arm-openssl-3.0.x.so.node ]; then
+    export PRISMA_QUERY_ENGINE_LIBRARY="/app/node_modules/@prisma/engines/libquery_engine-linux-arm-openssl-3.0.x.so.node"
+    export PRISMA_SCHEMA_ENGINE_BINARY="/app/node_modules/@prisma/engines/schema-engine-linux-arm-openssl-3.0.x"
+fi
+
 # Define paths
 SOURCE_DB="/app/prisma/dev.db"
 TARGET_DB="/app/data/dev.db"
