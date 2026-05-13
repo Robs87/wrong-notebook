@@ -44,8 +44,12 @@ RUN case "${TARGETPLATFORM}" in \
 # Temporarily remove linux-arm-openssl-3.0.x from binaryTargets for all platforms
 # to avoid 404 errors during multi-arch builds. For amd64/arm64 this target is
 # unused. For armv7 we handle it separately below.
-RUN sed -i 's/"linux-arm-openssl-3.0.x"//' prisma/schema.prisma ;\
-    sed -i 's/,\s*,/,/' prisma/schema.prisma
+# Step 1: remove the arm target (with leading space)
+# Step 2: clean up trailing comma before ]
+# Step 3: clean up double commas
+RUN sed -i 's/ "linux-arm-openssl-3.0.x"//' prisma/schema.prisma
+RUN sed -i 's/, *]/]/' prisma/schema.prisma
+RUN sed -i 's/,,/,/' prisma/schema.prisma
 
 # For armv7 builds: copy pre-compiled engines BEFORE prisma generate
 # so Prisma can find the native engine at the expected location
@@ -76,7 +80,7 @@ RUN PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 \
 
 # For armv7 builds: restore arm binaryTarget in schema and ensure engine files are in place
 RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
-      sed -i 's/binaryTargets = \["native", "linux-musl-openssl-3.0.x"\]/binaryTargets = ["native", "linux-musl-openssl-3.0.x", "linux-arm-openssl-3.0.x"]/' prisma/schema.prisma ;\
+      sed -i 's/"linux-musl-openssl-3.0.x"/"linux-musl-openssl-3.0.x", "linux-arm-openssl-3.0.x"/' prisma/schema.prisma ;\
     fi
 
 # Next.js collects completely anonymous telemetry data about general usage.
