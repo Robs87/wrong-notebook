@@ -29,9 +29,11 @@ RUN apk add --no-cache openssl
 # For amd64/arm64 this directory doesn't exist in build context
 ARG TARGETPLATFORM
 RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ] && [ -d /app/engines/armv7 ]; then \
-      mkdir -p /app/node_modules/.prisma/client ;\
-      cp /app/engines/armv7/libquery_engine-linux-arm-openssl-3.0.x.so.node /app/node_modules/.prisma/client/ ;\
-      cp /app/engines/armv7/schema-engine-linux-arm /app/node_modules/.prisma/client/ ;\
+      mkdir -p /app/node_modules/@prisma/engines ;\
+      cp /app/engines/armv7/libquery_engine-linux-arm-openssl-3.0.x.so.node /app/node_modules/@prisma/engines/ ;\
+      cp /app/engines/armv7/schema-engine-linux-arm /app/node_modules/@prisma/engines/schema-engine-linux-arm-openssl-3.0.x ;\
+      cp /app/engines/armv7/query-engine-linux-arm /app/node_modules/@prisma/engines/query-engine-linux-arm-openssl-3.0.x ;\
+      cp /app/engines/armv7/prisma-fmt-linux-arm /app/node_modules/@prisma/engines/prisma-fmt-linux-arm-openssl-3.0.x ;\
     fi
 
 # Temporarily remove linux-arm-openssl-3.0.x from binaryTargets for all platforms
@@ -43,10 +45,12 @@ RUN sed -i 's/,,/,/' prisma/schema.prisma
 # Generate Prisma Client FIRST (needed for tsc and everything after)
 ENV DATABASE_URL="file:/app/prisma/dev.db"
 
-# For armv7: use PRISMA_QUERY_ENGINE_BINARY to skip engine download
+# For armv7: engines are already in @prisma/engines/ (copied above).
+# PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 makes Prisma skip download when
+# .sha256 checksum file is missing (which it is for our pre-compiled engines).
 RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
-      PRISMA_QUERY_ENGINE_BINARY="/app/node_modules/.prisma/client/libquery_engine-linux-arm-openssl-3.0.x.so.node" \
-      PRISMA_SCHEMA_ENGINE_BINARY="/app/node_modules/.prisma/client/schema-engine-linux-arm" \
+      PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 \
+      PRISMA_CLI_BINARY_TARGETS="native" \
       npx prisma generate ;\
     else \
       npx prisma generate ;\
