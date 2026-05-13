@@ -1,5 +1,11 @@
-# Dockerfile — for amd64/arm64 CI builds (GitHub Actions)
-# Clean, no armv7-specific logic
+# Dockerfile.armv7 — for local armv7 builds on Oracle Cloud ARM server
+#
+# Build context must include:
+#   - .next-prebuilt/    (pre-built Next.js output from scripts/build-armv7.sh)
+#   - engines/armv7/     (pre-compiled armv7 Prisma engines)
+#
+# This Dockerfile skips `npm run build` entirely (too slow under QEMU).
+# Only native module compilation runs under QEMU.
 
 FROM node:22-alpine AS deps
 RUN apk add --no-cache libc6-compat
@@ -14,18 +20,35 @@ COPY . .
 RUN apk add --no-cache openssl
 
 ENV DATABASE_URL="file:/app/prisma/dev.db"
+
+# Remove arm binaryTarget to avoid 404 during prisma generate
+RUN sed -i 's/ "linux-arm-openssl-3.0.x"//' prisma/schema.prisma && \
+    sed -i 's/, *]/]/' prisma/schema.prisma && \
+    sed -i 's/,,/,/' prisma/schema.prisma
+
 RUN npx prisma generate
+
 RUN npx tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020
 
-ENV NEXT_TELEMETRY_DISABLED=1
-ENV NODE_OPTIONS="--max-old-space-size=4096"
-RUN npm run build
+# Copy pre-built Next.js output instead of building under QEMU
+RUN echo "Copying pre-built .next from context..." && \
+    cp -r /app/.next-prebuilt .next
+
+# Copy pre-compiled armv7 Prisma engines
+RUN if [ -d /app/engines/armv7 ]; then \
+      mkdir -p /app/node_modules/@prisma/engines ;\
+      cp /app/engines/armv7/libquery_engine-linux-arm-openssl-3.0.x.so.node /app/node_modules/@prisma/engines/ ;\
+      cp /app/engines/armv7/schema-engine-linux-arm /app/node_modules/@prisma/engines/schema-engine-linux-arm-openssl-3.0.x ;\
+      cp /app/engines/armv7/query-engine-linux-arm /app/node_modules/@prisma/engines/query-engine-linux-arm-openssl-3.0.x ;\
+      cp /app/engines/armv7/prisma-fmt-linux-arm /app/node_modules/@prisma/engines/prisma-fmt-linux-arm-openssl-3.0.x ;\
+    fi
 
 FROM node:22-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1
 
 RUN apk add --no-cache su-exec openssl \
     && addgroup --system --gid 1001 nodejs \
@@ -52,7 +75,6 @@ ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 ENV DATABASE_URL="file:/app/data/dev.db"
 ENV AUTH_TRUST_HOST=true
-ENV PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1
 
 ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["node", "server.js"]

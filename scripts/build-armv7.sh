@@ -2,76 +2,69 @@
 # build-armv7.sh — Build armv7 Docker image on Oracle Cloud ARM server
 #
 # Strategy:
-# 1. Build JS output (next build) natively on arm64 — fast
-# 2. Place pre-built output in .next-prebuilt/
-# 3. Use docker buildx + QEMU to build armv7 image
-#    Dockerfile copies .next-prebuilt/ instead of running next build under QEMU
-# 4. Only native module compilation (better-sqlite3) runs under QEMU — much faster
+# 1. Temporarily remove linux-arm-openssl-3.0.x from schema (not available on Prisma CDN)
+# 2. Build JS output natively on arm64 (fast)
+# 3. Restore schema with linux-arm-openssl-3.0.x
+# 4. docker buildx + QEMU: copies pre-built .next + armv7 engines, skips next build
 #
-# Prerequisites:
-#   - docker, docker buildx, qemu-user-static
-#   - docker login ghcr.io -u <username>
-#   - npm ci already done (or will be done by Dockerfile)
-#
-# Usage:
-#   ./build-armv7.sh [tag]
-#   Default tag: latest
+# Usage: ./build-armv7.sh [tag]
 
 set -euo pipefail
 
 TAG="${1:-latest}"
 IMAGE="ghcr.io/wttwins/wrong-notebook:${TAG}-armv7"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENGINES_DIR="${SCRIPT_DIR}/engines/armv7"
+
+export PATH="${SCRIPT_DIR}/node_modules/.bin:${PATH}"
 
 echo "=== Building armv7 Docker image: ${IMAGE} ==="
 
 # Step 1: Download pre-compiled armv7 Prisma engines
 echo "→ Checking armv7 Prisma engines..."
 mkdir -p "${ENGINES_DIR}"
-
-maybe_download() {
-  local url="$1" file="$2"
+for engine in libquery_engine schema-engine query-engine prisma-fmt; do
+  file="${ENGINES_DIR}/${engine}-linux-arm-openssl-3.0.x"
+  [ "$engine" = "libquery_engine" ] && file="${ENGINES_DIR}/libquery_engine-linux-arm-openssl-3.0.x.so.node"
+  [ "$engine" = "schema-engine" ] && file="${ENGINES_DIR}/schema-engine-linux-arm-openssl-3.0.x"
+  url="https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/${engine}"
   if [ ! -f "${file}" ]; then
-    echo "  Downloading $(basename ${file})..."
+    echo "  Downloading ${engine}..."
     curl -L -o "${file}" "${url}"
   else
-    echo "  $(basename ${file}) already exists"
+    echo "  ${engine} already exists"
   fi
-}
+done
 
-maybe_download "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/libquery_engine.so.node" \
-  "${ENGINES_DIR}/libquery_engine-linux-arm-openssl-3.0.x.so.node"
-maybe_download "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/schema-engine" \
-  "${ENGINES_DIR}/schema-engine-linux-arm-openssl-3.0.x"
-maybe_download "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/query-engine" \
-  "${ENGINES_DIR}/query-engine-linux-arm-openssl-3.0.x"
-maybe_download "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/prisma-fmt" \
-  "${ENGINES_DIR}/prisma-fmt-linux-arm-openssl-3.0.x"
-
-# Step 2: Build JS output natively (on arm64, this is fast)
+# Step 2: Build JS output natively
 echo "→ Building Next.js output natively..."
 cd "${SCRIPT_DIR}"
 
-# Ensure dependencies are installed
 if [ ! -d node_modules ]; then
   echo "  Running npm ci..."
   npm ci
 fi
 
-# Generate Prisma client
+# Temporarily remove arm binaryTarget from schema so prisma generate doesn't try to download it
+echo "  Preparing schema (removing arm binaryTarget)..."
+cp prisma/schema.prisma prisma/schema.prisma.bak
+sed -i 's/ "linux-arm-openssl-3.0.x"//' prisma/schema.prisma
+sed -i 's/, *]/]/' prisma/schema.prisma
+sed -i 's/,,/,/' prisma/schema.prisma
+
 echo "  Generating Prisma client..."
-npx prisma generate
+prisma generate
 
-# Compile rebuild-system-tags.ts
 echo "  Compiling scripts..."
-npx tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020
+tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020
 
-# Build Next.js
 echo "  Running next build..."
 NEXT_TELEMETRY_DISABLED=1 NODE_OPTIONS="--max-old-space-size=4096" npm run build
 
-# Copy build output to .next-prebuilt for Dockerfile to use
+# Restore schema
+echo "  Restoring schema..."
+mv prisma/schema.prisma.bak prisma/schema.prisma
+
 echo "  Copying build output to .next-prebuilt/..."
 rm -rf .next-prebuilt
 cp -r .next .next-prebuilt
@@ -85,21 +78,14 @@ if ! docker run --rm --platform linux/arm/v7 arm32v7/alpine uname -m 2>/dev/null
 fi
 echo "  QEMU OK"
 
-# Step 4: Build armv7 Docker image using buildx
-echo "→ Building armv7 Docker image (QEMU, but no next build needed)..."
+# Step 4: Build armv7 Docker image
+echo "→ Building armv7 Docker image (QEMU, pre-built JS, armv7 engines)..."
 docker buildx build \
   --platform linux/arm/v7 \
   --tag "${IMAGE}" \
   --push \
-  --file Dockerfile \
+  --file Dockerfile.armv7 \
   .
 
 echo ""
 echo "=== Done: ${IMAGE} ==="
-echo ""
-echo "To add to multi-arch manifest, run:"
-echo "  docker manifest create ghcr.io/wttwins/wrong-notebook:${TAG} \\"
-echo "    --amend ghcr.io/wttwins/wrong-notebook:${TAG}-amd64 \\"
-echo "    --amend ghcr.io/wttwins/wrong-notebook:${TAG}-arm64 \\"
-echo "    --amend ghcr.io/wttwins/wrong-notebook:${TAG}-armv7"
-echo "  docker manifest push ghcr.io/wttwins/wrong-notebook:${TAG}"
