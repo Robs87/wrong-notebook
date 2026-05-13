@@ -13,114 +13,68 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-amd64-arm64:
+  build-amd64:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to the Container registry
-        uses: docker/login-action@v3
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push Docker image (amd64 + arm64)
+      - name: Build and push (amd64)
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          platforms: linux/amd64,linux/arm64
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}-amd64-arm64
+          platforms: linux/amd64
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}-amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  build-armv7:
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
+  build-arm64:
+    runs-on: ubuntu-latest-arm64
     permissions:
       contents: read
       packages: write
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download pre-compiled armv7 Prisma engines
-        run: |
-          mkdir -p engines/armv7
-          curl -L -o engines/armv7/libquery_engine-linux-arm-openssl-3.0.x.so.node \
-            "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/libquery_engine.so.node"
-          curl -L -o engines/armv7/schema-engine-linux-arm \
-            "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/schema-engine"
-          curl -L -o engines/armv7/query-engine-linux-arm \
-            "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/query-engine"
-          curl -L -o engines/armv7/prisma-fmt-linux-arm \
-            "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/prisma-fmt"
-          ls -la engines/armv7/
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to the Container registry
-        uses: docker/login-action@v3
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push Docker image (armv7)
+      - name: Build and push (arm64)
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          platforms: linux/arm/v7
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}-armv7
-          build-args: |
-            BUILDKIT_INLINE_CACHE=1
-          # Increase memory limit for emulated builds
-          # QEMU emulation is slow, give it more time and memory
-          driver-opts: |
-            memory=4g
+          platforms: linux/arm64
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}-arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   merge-manifests:
-    needs: [build-amd64-arm64, build-armv7]
+    needs: [build-amd64, build-arm64]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
-      - name: Log in to the Container registry
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Create and push multi-arch manifest
         run: |
           docker manifest create \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }} \
-            --amend ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}-amd64-arm64 \
-            --amend ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}-armv7
+            --amend ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}-amd64 \
+            --amend ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}-arm64
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
