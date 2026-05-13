@@ -25,53 +25,25 @@ COPY . .
 # Install OpenSSL for Prisma
 RUN apk add --no-cache openssl
 
-# Download Prisma engines for armv7 (curl needed for downloading)
+# Copy pre-compiled armv7 engines (downloaded by CI before build)
+# For amd64/arm64 this directory doesn't exist in build context
 ARG TARGETPLATFORM
-RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
-      apk add --no-cache curl ;\
-    fi
-
-RUN case "${TARGETPLATFORM}" in \
-    "linux/amd64") echo "Building for amd64" ;; \
-    "linux/arm64") echo "Building for arm64" ;; \
-    "linux/arm/v7") \
-        echo "Building for arm/v7 - downloading pre-compiled engines" ;\
-        mkdir -p /app/engines/armv7 ;\
-        curl -L -o /app/engines/armv7/libquery_engine-linux-arm-openssl-3.0.x.so.node "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/libquery_engine.so.node" ;\
-        curl -L -o /app/engines/armv7/schema-engine-linux-arm "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/schema-engine" ;\
-        curl -L -o /app/engines/armv7/query-engine-linux-arm "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/query-engine" ;\
-        curl -L -o /app/engines/armv7/prisma-fmt-linux-arm "https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0/prisma-fmt" ;\
-        ;; \
-    *) echo "Building for unknown platform: ${TARGETPLATFORM}" ;; \
-    esac
-
-# Temporarily remove linux-arm-openssl-3.0.x from binaryTargets for all platforms
-# to avoid 404 errors during multi-arch builds. For amd64/arm64 this target is
-# unused. For armv7 we handle it separately below.
-# Step 1: remove the arm target (with leading space)
-# Step 2: clean up trailing comma before ]
-# Step 3: clean up double commas
-RUN sed -i 's/ "linux-arm-openssl-3.0.x"//' prisma/schema.prisma
-RUN sed -i 's/, *]/]/' prisma/schema.prisma
-RUN sed -i 's/,,/,/' prisma/schema.prisma
-
-# Generate Prisma Client FIRST (needed for tsc and everything after)
-# We temporarily set DATABASE_URL to a local file for the build process
-ENV DATABASE_URL="file:/app/prisma/dev.db"
-
-# For armv7: copy pre-compiled engines and set env vars so Prisma skips download
-# For amd64/arm64: engines are already in node_modules/.prisma/client/ from npm ci
-ARG TARGETPLATFORM
-
-# Copy armv7 engines before generate (armv7 only)
-RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
+RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ] && [ -d /app/engines/armv7 ]; then \
       mkdir -p /app/node_modules/.prisma/client ;\
       cp /app/engines/armv7/libquery_engine-linux-arm-openssl-3.0.x.so.node /app/node_modules/.prisma/client/ ;\
       cp /app/engines/armv7/schema-engine-linux-arm /app/node_modules/.prisma/client/ ;\
     fi
 
-# Generate Prisma Client
-# For armv7: use PRISMA_QUERY_ENGINE_BINARY to point to pre-compiled engine
+# Temporarily remove linux-arm-openssl-3.0.x from binaryTargets for all platforms
+# to avoid 404 errors during prisma generate
+RUN sed -i 's/ "linux-arm-openssl-3.0.x"//' prisma/schema.prisma
+RUN sed -i 's/, *]/]/' prisma/schema.prisma
+RUN sed -i 's/,,/,/' prisma/schema.prisma
+
+# Generate Prisma Client FIRST (needed for tsc and everything after)
+ENV DATABASE_URL="file:/app/prisma/dev.db"
+
+# For armv7: use PRISMA_QUERY_ENGINE_BINARY to skip engine download
 RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
       PRISMA_QUERY_ENGINE_BINARY="/app/node_modules/.prisma/client/libquery_engine-linux-arm-openssl-3.0.x.so.node" \
       PRISMA_SCHEMA_ENGINE_BINARY="/app/node_modules/.prisma/client/schema-engine-linux-arm" \
@@ -89,7 +61,7 @@ RUN npx tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInter
 # Run seed script that depends on compiled tsc output
 RUN node ./dist-scripts/scripts/rebuild-system-tags.js
 
-# For armv7 builds: restore arm binaryTarget in schema and ensure engine files are in place
+# For armv7 builds: restore arm binaryTarget in schema
 RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
       sed -i 's/"linux-musl-openssl-3.0.x"/"linux-musl-openssl-3.0.x", "linux-arm-openssl-3.0.x"/' prisma/schema.prisma ;\
     fi
