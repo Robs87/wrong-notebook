@@ -63,11 +63,12 @@ RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
 # They are handled by docker-entrypoint.sh at container startup.
 # This avoids issues with Prisma CLI tools (schema-engine) under QEMU emulation on armv7.
 
-# Pre-compile runtime scripts (needs PrismaClient from generate above)
+# Pre-compile runtime scripts (needs PrismaClient type definitions from generate above)
+# Note: tsc compile only needs type defs, no DB connection required
 RUN npx tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020
 
-# Run seed script that depends on compiled tsc output
-RUN node ./dist-scripts/scripts/rebuild-system-tags.js
+# NOTE: rebuild-system-tags.js execution is NOT run during build (no DB available).
+# It is handled by docker-entrypoint.sh at container startup.
 
 # For armv7 builds: restore arm binaryTarget in schema
 RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
