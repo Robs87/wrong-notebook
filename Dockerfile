@@ -41,12 +41,18 @@ RUN case "${TARGETPLATFORM}" in \
     *) echo "Building for unknown platform: ${TARGETPLATFORM}" ;; \
     esac
 
-# For armv7 builds, remove linux-arm-openssl-3.0.x from binaryTargets temporarily
-# to prevent prisma generate in multi-arch build from trying to download it,
-# then restore it after generate
+# Temporarily remove linux-arm-openssl-3.0.x from binaryTargets for all platforms
+# to avoid 404 errors during multi-arch builds. For amd64/arm64 this target is
+# unused. For armv7 we handle it separately below.
+RUN sed -i 's/"linux-arm-openssl-3.0.x"//' prisma/schema.prisma ;\
+    sed -i 's/,\s*,/,/' prisma/schema.prisma
+
+# For armv7 builds: copy pre-compiled engines BEFORE prisma generate
+# so Prisma can find the native engine at the expected location
 RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
-      sed -i 's/"linux-arm-openssl-3.0.x"//' prisma/schema.prisma ;\
-      sed -i 's/,\s*,/,/' prisma/schema.prisma ;\
+      mkdir -p /app/node_modules/.prisma/client ;\
+      cp /app/engines/armv7/libquery_engine-linux-arm-openssl-3.0.x.so.node /app/node_modules/.prisma/client/ ;\
+      cp /app/engines/armv7/schema-engine-linux-arm /app/node_modules/.prisma/client/ ;\
     fi
 
 # Generate Prisma Client and Seed Database
@@ -57,18 +63,20 @@ ENV DATABASE_URL="file:/app/prisma/dev.db"
 RUN npx tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020
 
 # Initialize database: generate client, run migrations, seed admin user, seed system tags
-RUN npx prisma generate \
+# PRISMA_CLI_BINARY_TARGETS="" prevents Prisma from downloading any engines.
+# For amd64/arm64, engines are downloaded during npm ci (postinstall).
+# For armv7, we manually copy pre-compiled engines before this step.
+# PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING: skip checksum validation for third-party engines
+RUN PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 \
+    PRISMA_CLI_BINARY_TARGETS="" \
+    npx prisma generate \
     && npx prisma migrate deploy \
     && npx prisma db seed \
     && node ./dist-scripts/scripts/rebuild-system-tags.js
 
-# For armv7 builds: restore arm binaryTarget in schema and copy engine files
-# so the runner can find them at runtime
+# For armv7 builds: restore arm binaryTarget in schema and ensure engine files are in place
 RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
       sed -i 's/binaryTargets = \["native", "linux-musl-openssl-3.0.x"\]/binaryTargets = ["native", "linux-musl-openssl-3.0.x", "linux-arm-openssl-3.0.x"]/' prisma/schema.prisma ;\
-      mkdir -p /app/node_modules/.prisma/client ;\
-      cp /app/engines/armv7/libquery_engine-linux-arm-openssl-3.0.x.so.node /app/node_modules/.prisma/client/ ;\
-      cp /app/engines/armv7/schema-engine-linux-arm /app/node_modules/.prisma/client/ ;\
     fi
 
 # Next.js collects completely anonymous telemetry data about general usage.
