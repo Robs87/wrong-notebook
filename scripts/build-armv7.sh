@@ -89,3 +89,15 @@ docker buildx build \
 
 echo ""
 echo "=== Done: ${IMAGE} ==="
+echo ""
+
+# Step 5: Merge into multi-arch manifest
+echo "→ Merging into multi-arch manifest..."
+if bash scripts/merge-manifest.sh "${TAG}" 2>&1; then
+  echo ""
+  echo "=== All done: ${REGISTRY}/${IMAGE_NAME}:${TAG} (amd64 + arm64 + armv7) ==="
+else
+  echo ""
+  echo "⚠️  Merge skipped (CI images may not be ready yet)."
+  echo "    Run manually later: bash scripts/merge-manifest.sh ${TAG}"
+fi
