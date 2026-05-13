@@ -80,6 +80,8 @@ RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
 # Uncomment the following line in case you want to disable telemetry during the build.
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Increase memory limit for Node.js builds on emulated architectures
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN npm run build
 
 # Production image, copy all the files and run next

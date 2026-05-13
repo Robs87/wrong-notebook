@@ -50,6 +50,7 @@ jobs:
 
   build-armv7:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
       contents: read
       packages: write
@@ -92,6 +93,12 @@ jobs:
           platforms: linux/arm/v7
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}-armv7
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+          # Increase memory limit for emulated builds
+          # QEMU emulation is slow, give it more time and memory
+          driver-opts: |
+            memory=4g
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
