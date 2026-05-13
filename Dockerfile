@@ -25,8 +25,12 @@ COPY . .
 # Install OpenSSL for Prisma
 RUN apk add --no-cache openssl
 
-# Download Prisma engines for all target architectures
+# Download Prisma engines for armv7 (curl needed for downloading)
 ARG TARGETPLATFORM
+RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
+      apk add --no-cache curl ;\
+    fi
+
 RUN case "${TARGETPLATFORM}" in \
     "linux/amd64") echo "Building for amd64" ;; \
     "linux/arm64") echo "Building for arm64" ;; \
