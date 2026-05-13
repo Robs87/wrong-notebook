@@ -55,27 +55,33 @@ RUN sed -i 's/ "linux-arm-openssl-3.0.x"//' prisma/schema.prisma
 RUN sed -i 's/, *]/]/' prisma/schema.prisma
 RUN sed -i 's/,,/,/' prisma/schema.prisma
 
-# For armv7 builds: copy pre-compiled engines BEFORE prisma generate
-# so Prisma can find the native engine at the expected location
+# Generate Prisma Client FIRST (needed for tsc and everything after)
+# We temporarily set DATABASE_URL to a local file for the build process
+ENV DATABASE_URL="file:/app/prisma/dev.db"
+
+# For armv7: copy pre-compiled engines and set env vars so Prisma skips download
+# For amd64/arm64: engines are already in node_modules/.prisma/client/ from npm ci
+ARG TARGETPLATFORM
+
+# Copy armv7 engines before generate (armv7 only)
 RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
       mkdir -p /app/node_modules/.prisma/client ;\
       cp /app/engines/armv7/libquery_engine-linux-arm-openssl-3.0.x.so.node /app/node_modules/.prisma/client/ ;\
       cp /app/engines/armv7/schema-engine-linux-arm /app/node_modules/.prisma/client/ ;\
     fi
 
-# Generate Prisma Client FIRST (needed for tsc and everything after)
-# We temporarily set DATABASE_URL to a local file for the build process
-ENV DATABASE_URL="file:/app/prisma/dev.db"
+# Generate Prisma Client
+# For armv7: use PRISMA_QUERY_ENGINE_BINARY to point to pre-compiled engine
+RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
+      PRISMA_QUERY_ENGINE_BINARY="/app/node_modules/.prisma/client/libquery_engine-linux-arm-openssl-3.0.x.so.node" \
+      PRISMA_SCHEMA_ENGINE_BINARY="/app/node_modules/.prisma/client/schema-engine-linux-arm" \
+      npx prisma generate ;\
+    else \
+      npx prisma generate ;\
+    fi
 
-# PRISMA_CLI_BINARY_TARGETS="" prevents Prisma from downloading any engines.
-# For amd64/arm64, engines are downloaded during npm ci (postinstall).
-# For armv7, we manually copy pre-compiled engines before this step.
-# PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING: skip checksum validation for third-party engines
-RUN PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 \
-    PRISMA_CLI_BINARY_TARGETS="" \
-    npx prisma generate \
-    && npx prisma migrate deploy \
-    && npx prisma db seed
+# Migrate and seed
+RUN npx prisma migrate deploy && npx prisma db seed
 
 # Pre-compile runtime scripts (needs PrismaClient from generate above)
 RUN npx tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020
