@@ -63,14 +63,10 @@ RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
       cp /app/engines/armv7/schema-engine-linux-arm /app/node_modules/.prisma/client/ ;\
     fi
 
-# Generate Prisma Client and Seed Database
-# We temporarily set DATABASE_URL to a local file for the build process to generate the file
+# Generate Prisma Client FIRST (needed for tsc and everything after)
+# We temporarily set DATABASE_URL to a local file for the build process
 ENV DATABASE_URL="file:/app/prisma/dev.db"
 
-# Pre-compile runtime scripts FIRST (needed for tag seeding)
-RUN npx tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020
-
-# Initialize database: generate client, run migrations, seed admin user, seed system tags
 # PRISMA_CLI_BINARY_TARGETS="" prevents Prisma from downloading any engines.
 # For amd64/arm64, engines are downloaded during npm ci (postinstall).
 # For armv7, we manually copy pre-compiled engines before this step.
@@ -79,8 +75,13 @@ RUN PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 \
     PRISMA_CLI_BINARY_TARGETS="" \
     npx prisma generate \
     && npx prisma migrate deploy \
-    && npx prisma db seed \
-    && node ./dist-scripts/scripts/rebuild-system-tags.js
+    && npx prisma db seed
+
+# Pre-compile runtime scripts (needs PrismaClient from generate above)
+RUN npx tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020
+
+# Run seed script that depends on compiled tsc output
+RUN node ./dist-scripts/scripts/rebuild-system-tags.js
 
 # For armv7 builds: restore arm binaryTarget in schema and ensure engine files are in place
 RUN if [ "${TARGETPLATFORM}" = "linux/arm/v7" ]; then \
