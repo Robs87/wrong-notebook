@@ -44,8 +44,8 @@ ENV PRISMA_QUERY_ENGINE_LIBRARY=/app/node_modules/@prisma/engines/libquery_engin
 ENV PRISMA_SCHEMA_ENGINE_BINARY=/app/node_modules/@prisma/engines/schema-engine-linux-arm-openssl-3.0.x
 RUN npx prisma generate
 
-# Step 4: Compile scripts
-RUN npx tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020
+# Step 4: Copy pre-compiled scripts (built natively by build-armv7.sh, already in build context)
+RUN cp -r /app/dist-scripts ./dist-scripts 2>/dev/null || echo "No pre-built dist-scripts, skipping"
 
 # Step 5: Copy pre-built Next.js output instead of building under QEMU
 RUN cp -r /app/.next-prebuilt .next
