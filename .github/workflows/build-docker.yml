@@ -29,7 +29,7 @@ jobs:
           path: |
             .next
             dist-scripts
-          key: js-build-${{ hashFiles('package-lock.json', 'prisma/schema.prisma') }}
+          key: js-build-${{ hashFiles('package-lock.json', 'prisma/schema.prisma', 'src/**/*.ts', 'src/**/*.tsx', 'src/**/*.js', 'src/**/*.jsx') }}
 
       - name: Install dependencies
         if: steps.cache-js.outputs.cache-hit != 'true'
