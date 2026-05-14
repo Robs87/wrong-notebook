@@ -13,7 +13,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # ── Stage 1: Build JS output on native amd64 ─────────────────────────
+  # ── Stage 1: Build JS output on native amd64 (for armv7 reuse) ───────
   build-js:
     runs-on: ubuntu-latest
     steps:
@@ -63,9 +63,8 @@ jobs:
             dist-scripts
           retention-days: 1
 
-  # ── Stage 2: Build amd64 + arm64 images (native) ─────────────────────
+  # ── Stage 2: Build amd64 + arm64 images (standard Dockerfile) ────────
   build-amd64-arm64:
-    needs: build-js
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -78,10 +77,6 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Download JS build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: js-build-output
       - name: Build and push amd64 + arm64
         uses: docker/build-push-action@v5
         with:
@@ -94,7 +89,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── Stage 3: Build armv7 image (QEMU + pre-built JS + pre-compiled natives) ─
+  # ── Stage 3: Build armv7 image (QEMU + pre-built JS) ─────────────────
   build-armv7:
     needs: build-js
     runs-on: ubuntu-latest
@@ -123,21 +118,16 @@ jobs:
 
       - name: Download armv7 native binaries
         run: |
-          # Prisma engines
-          mkdir -p engines/armv7
+          mkdir -p engines/armv7 better-sqlite3-prebuild
           BASE="https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0"
           curl -L -o engines/armv7/libquery_engine-linux-arm-openssl-3.0.x.so.node "${BASE}/libquery_engine"
           curl -L -o engines/armv7/schema-engine-linux-arm-openssl-3.0.x "${BASE}/schema-engine"
           curl -L -o engines/armv7/query-engine-linux-arm-openssl-3.0.x "${BASE}/query-engine"
           curl -L -o engines/armv7/prisma-fmt-linux-arm-openssl-3.0.x "${BASE}/prisma-fmt"
-          # better-sqlite3 prebuild (single .node file)
-          mkdir -p better-sqlite3-prebuild
-          curl -L -o better-sqlite3-prebuild/better_sqlite3.node \
-            "https://raw.githubusercontent.com/WiseLibs/better-sqlite3/v12.10.0/build/Release/better_sqlite3.node" || \
           curl -L -o /tmp/sqlite3.tar.gz \
-            "https://github.com/WiseLibs/better-sqlite3/releases/download/v12.10.0/better-sqlite3-v12.10.0-node-v127-linux-arm.tar.gz" && \
-          tar xzf /tmp/sqlite3.tar.gz && \
-          cp build/Release/better_sqlite3.node better-sqlite3-prebuild/ && \
+            "https://github.com/WiseLibs/better-sqlite3/releases/download/v12.10.0/better-sqlite3-v12.10.0-node-v127-linux-arm.tar.gz"
+          tar xzf /tmp/sqlite3.tar.gz build/Release/better_sqlite3.node
+          mv build/Release/better_sqlite3.node better-sqlite3-prebuild/
           rm -rf build /tmp/sqlite3.tar.gz
           ls -lh engines/armv7/ better-sqlite3-prebuild/
 
@@ -146,28 +136,16 @@ jobs:
           cat > Dockerfile.armv7 << 'DOCKERFILE'
           FROM node:22-alpine
           WORKDIR /app
-
-          # Install runtime deps and curl for downloading prebuilds
           RUN apk add --no-cache su-exec openssl curl
-
-          # Install JS dependencies without compiling native modules
           COPY package.json package-lock.json ./
           RUN npm ci --ignore-scripts
-
-          # Install armv7 better-sqlite3 native binary
           COPY better-sqlite3-prebuild/better_sqlite3.node node_modules/better-sqlite3/build/Release/better_sqlite3.node
-
-          # Install armv7 Prisma engines
           COPY engines/armv7/ node_modules/@prisma/engines/
-
-          # Generate Prisma client using local armv7 engines
           ENV DATABASE_URL="file:/app/prisma/dev.db"
           ENV PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1
           ENV PRISMA_QUERY_ENGINE_LIBRARY=/app/node_modules/@prisma/engines/libquery_engine-linux-arm-openssl-3.0.x.so.node
           ENV PRISMA_SCHEMA_ENGINE_BINARY=/app/node_modules/@prisma/engines/schema-engine-linux-arm-openssl-3.0.x
           RUN npx prisma generate
-
-          # Copy pre-built JS output (arch-independent)
           COPY .next .next
           COPY dist-scripts dist-scripts
           COPY prisma ./prisma
@@ -175,12 +153,10 @@ jobs:
           COPY config ./config
           COPY docker-entrypoint.sh ./
           COPY https-server.js ./
-
           RUN addgroup --system --gid 1001 nodejs && \
               adduser --system --uid 1001 nextjs && \
               mkdir -p /app/data && \
               chown -R nextjs:nodejs /app/data /app/.next
-
           ENV NODE_ENV=production
           ENV NEXT_TELEMETRY_DISABLED=1
           ENV PORT=3000
