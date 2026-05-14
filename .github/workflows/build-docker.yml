@@ -14,13 +14,10 @@ env:
 
 jobs:
   # ── Stage 1: Build JS output on native amd64 ─────────────────────────
-  # Next.js output is architecture-independent JS.
-  # We build once and reuse for all platforms.
   build-js:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -32,7 +29,6 @@ jobs:
           path: |
             .next
             dist-scripts
-            node_modules
           key: js-build-${{ hashFiles('package-lock.json', 'prisma/schema.prisma') }}
 
       - name: Install dependencies
@@ -67,7 +63,7 @@ jobs:
             dist-scripts
           retention-days: 1
 
-  # ── Stage 2: Build amd64 + arm64 images (native, fast) ───────────────
+  # ── Stage 2: Build amd64 + arm64 images (native) ─────────────────────
   build-amd64-arm64:
     needs: build-js
     runs-on: ubuntu-latest
@@ -76,20 +72,16 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-
       - uses: docker/setup-buildx-action@v3
-
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Download JS build artifacts
         uses: actions/download-artifact@v4
         with:
           name: js-build-output
-
       - name: Build and push amd64 + arm64
         uses: docker/build-push-action@v5
         with:
@@ -101,22 +93,18 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}-arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: |
-            SKIP_BUILD=1
 
-  # ── Stage 3: Build armv7 image (QEMU + pre-built JS) ────────────────
+  # ── Stage 3: Build armv7 image (QEMU + pre-built JS + pre-compiled natives) ─
   build-armv7:
     needs: build-js
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-
       - uses: docker/setup-buildx-action@v3
-
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -133,23 +121,77 @@ jobs:
         with:
           platforms: arm
 
-      - name: Download armv7 Prisma engines
+      - name: Download armv7 native binaries
         run: |
+          # Prisma engines
           mkdir -p engines/armv7
           BASE="https://github.com/idootop/armv7-prisma-engine/releases/download/5.14.0"
           curl -L -o engines/armv7/libquery_engine-linux-arm-openssl-3.0.x.so.node "${BASE}/libquery_engine"
           curl -L -o engines/armv7/schema-engine-linux-arm-openssl-3.0.x "${BASE}/schema-engine"
           curl -L -o engines/armv7/query-engine-linux-arm-openssl-3.0.x "${BASE}/query-engine"
           curl -L -o engines/armv7/prisma-fmt-linux-arm-openssl-3.0.x "${BASE}/prisma-fmt"
-          ls -lh engines/armv7/
-
-      - name: Download armv7 better-sqlite3 pre-compiled binary
-        run: |
+          # better-sqlite3 prebuild (single .node file)
           mkdir -p better-sqlite3-prebuild
-          # Node 22.x uses ABI version 127
-          curl -L -o better-sqlite3-prebuild/better-sqlite3-v12.10.0-node-v127-linux-arm.tar.gz \
-            "https://github.com/WiseLibs/better-sqlite3/releases/download/v12.10.0/better-sqlite3-v12.10.0-node-v127-linux-arm.tar.gz"
-          ls -lh better-sqlite3-prebuild/
+          curl -L -o better-sqlite3-prebuild/better_sqlite3.node \
+            "https://raw.githubusercontent.com/WiseLibs/better-sqlite3/v12.10.0/build/Release/better_sqlite3.node" || \
+          curl -L -o /tmp/sqlite3.tar.gz \
+            "https://github.com/WiseLibs/better-sqlite3/releases/download/v12.10.0/better-sqlite3-v12.10.0-node-v127-linux-arm.tar.gz" && \
+          tar xzf /tmp/sqlite3.tar.gz && \
+          cp build/Release/better_sqlite3.node better-sqlite3-prebuild/ && \
+          rm -rf build /tmp/sqlite3.tar.gz
+          ls -lh engines/armv7/ better-sqlite3-prebuild/
+
+      - name: Generate armv7 Dockerfile
+        run: |
+          cat > Dockerfile.armv7 << 'DOCKERFILE'
+          FROM node:22-alpine
+          WORKDIR /app
+
+          # Install runtime deps and curl for downloading prebuilds
+          RUN apk add --no-cache su-exec openssl curl
+
+          # Install JS dependencies without compiling native modules
+          COPY package.json package-lock.json ./
+          RUN npm ci --ignore-scripts
+
+          # Install armv7 better-sqlite3 native binary
+          COPY better-sqlite3-prebuild/better_sqlite3.node node_modules/better-sqlite3/build/Release/better_sqlite3.node
+
+          # Install armv7 Prisma engines
+          COPY engines/armv7/ node_modules/@prisma/engines/
+
+          # Generate Prisma client using local armv7 engines
+          ENV DATABASE_URL="file:/app/prisma/dev.db"
+          ENV PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1
+          ENV PRISMA_QUERY_ENGINE_LIBRARY=/app/node_modules/@prisma/engines/libquery_engine-linux-arm-openssl-3.0.x.so.node
+          ENV PRISMA_SCHEMA_ENGINE_BINARY=/app/node_modules/@prisma/engines/schema-engine-linux-arm-openssl-3.0.x
+          RUN npx prisma generate
+
+          # Copy pre-built JS output (arch-independent)
+          COPY .next .next
+          COPY dist-scripts dist-scripts
+          COPY prisma ./prisma
+          COPY public ./public
+          COPY config ./config
+          COPY docker-entrypoint.sh ./
+          COPY https-server.js ./
+
+          RUN addgroup --system --gid 1001 nodejs && \
+              adduser --system --uid 1001 nextjs && \
+              mkdir -p /app/data && \
+              chown -R nextjs:nodejs /app/data /app/.next
+
+          ENV NODE_ENV=production
+          ENV NEXT_TELEMETRY_DISABLED=1
+          ENV PORT=3000
+          ENV HOSTNAME="0.0.0.0"
+          ENV DATABASE_URL="file:/app/data/dev.db"
+          ENV AUTH_TRUST_HOST=true
+          EXPOSE 3000
+          ENTRYPOINT ["./docker-entrypoint.sh"]
+          CMD ["node", "server.js"]
+          DOCKERFILE
+          echo "✅ Dockerfile.armv7 generated"
 
       - name: Build and push armv7
         uses: docker/build-push-action@v5
@@ -158,10 +200,7 @@ jobs:
           push: true
           platforms: linux/arm/v7
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}-armv7
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            SKIP_BUILD=1
+          file: Dockerfile.armv7
 
   # ── Stage 4: Merge all three archs into one manifest ─────────────────
   merge-manifests:
@@ -176,7 +215,6 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Create multi-arch manifest
         run: |
           docker manifest create \
@@ -184,8 +222,6 @@ jobs:
             --amend ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}-amd64 \
             --amend ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}-arm64 \
             --amend ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}-armv7
-
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
-
       - name: Verify manifest
         run: docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}

@@ -1,22 +1,19 @@
 # Dockerfile — multi-arch Docker build (amd64, arm64, armv7)
 #
-# For armv7 builds under QEMU:
-#   - JS output (.next, dist-scripts) is pre-built on amd64 and copied into context
-#   - npm ci runs with --ignore-scripts to skip native module compilation
-#   - better-sqlite3 armv7 pre-compiled binary is downloaded and placed correctly
-#   - Prisma engines for armv7 are copied from engines/armv7/ in build context
-#   - Only prisma generate runs under QEMU (fast)
+# Build args:
+#   SKIP_BUILD=1  — Skip compilation, use pre-built .next/dist-scripts/node_modules
+#                   Used for armv7 under QEMU where native compilation is too slow
+#
+# When SKIP_BUILD=1, the build context must contain:
+#   .next/          — pre-built Next.js output (arch-independent JS)
+#   dist-scripts/   — pre-compiled TypeScript scripts
+#   node_modules/   — pre-installed dependencies (with armv7 native modules)
 
 FROM node:22-alpine AS deps
-RUN apk add --no-cache libc6-compat curl
+RUN apk add --no-cache libc6-compat
 WORKDIR /app
 COPY package.json package-lock.json ./
-ARG SKIP_BUILD=
-RUN if [ -z "$SKIP_BUILD" ]; then \
-      npm ci; \
-    else \
-      npm ci --ignore-scripts; \
-    fi
+RUN npm ci
 
 FROM node:22-alpine AS builder
 WORKDIR /app
@@ -24,36 +21,12 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN apk add --no-cache openssl
 
-ARG SKIP_BUILD=
 ENV DATABASE_URL="file:/app/prisma/dev.db"
-
-# For armv7: install pre-compiled native modules, skip JS compilation
-RUN if [ -n "$SKIP_BUILD" ]; then \
-      echo "=== armv7: installing pre-compiled native modules ===" && \
-      # Install armv7 better-sqlite3 pre-compiled binary \
-      mkdir -p node_modules/better-sqlite3/prebuilds/linux-arm && \
-      curl -L -o /tmp/better-sqlite3-armv7.tar.gz \
-        "https://github.com/WiseLibs/better-sqlite3/releases/download/v12.10.0/better-sqlite3-v12.10.0-node-v127-linux-arm.tar.gz" && \
-      tar xzf /tmp/better-sqlite3-armv7.tar.gz -C node_modules/better-sqlite3/prebuilds/linux-arm && \
-      rm /tmp/better-sqlite3-armv7.tar.gz && \
-      # Copy armv7 Prisma engines \
-      mkdir -p node_modules/@prisma/engines && \
-      cp engines/armv7/libquery_engine-linux-arm-openssl-3.0.x.so.node node_modules/@prisma/engines/ && \
-      cp engines/armv7/schema-engine-linux-arm-openssl-3.0.x node_modules/@prisma/engines/ && \
-      cp engines/armv7/query-engine-linux-arm-openssl-3.0.x node_modules/@prisma/engines/ && \
-      cp engines/armv7/prisma-fmt-linux-arm-openssl-3.0.x node_modules/@prisma/engines/ && \
-      # Generate Prisma client using local engines \
-      PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 \
-      PRISMA_QUERY_ENGINE_LIBRARY=/app/node_modules/@prisma/engines/libquery_engine-linux-arm-openssl-3.0.x.so.node \
-      PRISMA_SCHEMA_ENGINE_BINARY=/app/node_modules/@prisma/engines/schema-engine-linux-arm-openssl-3.0.x \
-      npx prisma generate && \
-      echo "=== armv7 native modules ready ==="; \
-    else \
-      echo "=== Building from source ===" && \
-      npx prisma generate && \
-      npx tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020 && \
-      NEXT_TELEMETRY_DISABLED=1 NODE_OPTIONS="--max-old-space-size=4096" npm run build; \
-    fi
+RUN npx prisma generate
+RUN npx tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+RUN npm run build
 
 FROM node:22-alpine AS runner
 WORKDIR /app
