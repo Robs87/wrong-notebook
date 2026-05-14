@@ -102,6 +102,12 @@ jobs:
           rm -rf build /tmp/sqlite3.tar.gz
           ls -lh engines/armv7/ better-sqlite3-prebuild/
 
+      - name: Prepare build context
+        run: |
+          # .next is excluded by .dockerignore, so copy to a different name
+          cp -r .next .next-armv7
+          ls -lh .next-armv7/ | head -10
+
       - name: Generate armv7 Dockerfile
         run: |
           cat > Dockerfile.armv7 << 'DOCKERFILE'
@@ -117,7 +123,7 @@ jobs:
           ENV PRISMA_QUERY_ENGINE_LIBRARY=/app/node_modules/@prisma/engines/libquery_engine-linux-arm-openssl-3.0.x.so.node
           ENV PRISMA_SCHEMA_ENGINE_BINARY=/app/node_modules/@prisma/engines/schema-engine-linux-arm-openssl-3.0.x
           RUN npx prisma generate
-          COPY .next .next
+          COPY .next-armv7 .next
           COPY dist-scripts dist-scripts
           COPY prisma ./prisma
           COPY public ./public
