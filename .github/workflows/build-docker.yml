@@ -13,57 +13,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # ── Stage 1: Build JS output on native amd64 (for armv7 reuse) ───────
-  build-js:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Cache JS build output
-        id: cache-js
-        uses: actions/cache@v4
-        with:
-          path: |
-            .next
-            dist-scripts
-          key: js-build-${{ hashFiles('package-lock.json', 'prisma/schema.prisma', 'src/**/*.ts', 'src/**/*.tsx', 'src/**/*.js', 'src/**/*.jsx') }}
-
-      - name: Install dependencies
-        if: steps.cache-js.outputs.cache-hit != 'true'
-        run: npm ci
-
-      - name: Generate Prisma client
-        if: steps.cache-js.outputs.cache-hit != 'true'
-        run: npx prisma generate
-
-      - name: Compile scripts
-        if: steps.cache-js.outputs.cache-hit != 'true'
-        run: |
-          npx tsc scripts/rebuild-system-tags.ts \
-            --outDir dist-scripts \
-            --esModuleInterop --resolveJsonModule --skipLibCheck \
-            --module commonjs --target ES2020
-
-      - name: Build Next.js
-        if: steps.cache-js.outputs.cache-hit != 'true'
-        run: |
-          NEXT_TELEMETRY_DISABLED=1 \
-          NODE_OPTIONS="--max-old-space-size=4096" \
-          npm run build
-
-      - name: Upload JS build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: js-build-output
-          path: |
-            .next
-            dist-scripts
-          retention-days: 1
-
-  # ── Stage 2: Build amd64 + arm64 images (standard Dockerfile) ────────
+  # ── Stage 1: Build amd64 + arm64 images (standard Dockerfile) ────────
   build-amd64-arm64:
     runs-on: ubuntu-latest
     permissions:
@@ -89,9 +39,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── Stage 3: Build armv7 image (QEMU + pre-built JS) ─────────────────
+  # ── Stage 2: Build armv7 image ───────────────────────────────────────
+  # Build JS on native amd64 runner, then Dockerfile.armv7 copies it in.
+  # Only npm ci --ignore-scripts + prisma generate run under QEMU.
   build-armv7:
-    needs: build-js
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -99,17 +50,37 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Compile scripts
+        run: |
+          npx tsc scripts/rebuild-system-tags.ts \
+            --outDir dist-scripts \
+            --esModuleInterop --resolveJsonModule --skipLibCheck \
+            --module commonjs --target ES2020
+
+      - name: Build Next.js
+        run: |
+          NEXT_TELEMETRY_DISABLED=1 \
+          NODE_OPTIONS="--max-old-space-size=4096" \
+          npm run build
+
       - uses: docker/setup-buildx-action@v3
+
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download JS build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: js-build-output
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -178,7 +149,7 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}-armv7
           file: Dockerfile.armv7
 
-  # ── Stage 4: Merge all three archs into one manifest ─────────────────
+  # ── Stage 3: Merge all three archs into one manifest ─────────────────
   merge-manifests:
     needs: [build-amd64-arm64, build-armv7]
     runs-on: ubuntu-latest
