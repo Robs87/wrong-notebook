@@ -364,7 +364,9 @@ export class OpenAIProvider implements AIService {
 
     async reanswerQuestion(questionText: string, language: 'zh' | 'en' = 'zh', subject?: string | null, imageBase64?: string, gradeSemester?: string | null): Promise<ReanswerQuestionResult> {
         const { generateReanswerPrompt } = await import('./prompts');
-        const prompt = generateReanswerPrompt(language, questionText, subject, undefined, gradeSemester);
+        const config = getAppConfig();
+        const customTemplate = resolvePromptTemplate(config, 'reanswer', subject);
+        const prompt = generateReanswerPrompt(language, questionText, subject, { customTemplate }, gradeSemester);
 
         logger.info({
             provider: 'OpenAI',

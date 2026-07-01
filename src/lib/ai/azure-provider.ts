@@ -304,7 +304,9 @@ Knowledge Points: ${knowledgePoints.join(", ")}
         imageBase64?: string,
         gradeSemester?: string | null
     ): Promise<ReanswerQuestionResult> {
-        const prompt = generateReanswerPrompt(language, questionText, subject, undefined, gradeSemester);
+        const config = getAppConfig();
+        const customTemplate = resolvePromptTemplate(config, 'reanswer', subject);
+        const prompt = generateReanswerPrompt(language, questionText, subject, { customTemplate }, gradeSemester);
 
         logger.box('🔄 Reanswer Question Request', {
             provider: 'Azure OpenAI',

@@ -99,8 +99,8 @@ export function generateGradeInstruction(gradeSemester?: string | null): string 
  * 优先级：bySubject[科目] > 全局 prompts.analyze/similar > 内置默认模板
  */
 export function resolvePromptTemplate(
-    config: { prompts?: { analyze?: string; similar?: string; bySubject?: Record<string, { analyze?: string; similar?: string }> } },
-    type: 'analyze' | 'similar',
+    config: { prompts?: { analyze?: string; similar?: string; reanswer?: string; bySubject?: Record<string, { analyze?: string; similar?: string; reanswer?: string }> } },
+    type: 'analyze' | 'similar' | 'reanswer',
     subject?: string | null
 ): string | undefined {
     // 1. 优先查找科目专属模板

@@ -22,4 +22,27 @@ describe('reanswer request body', () => {
 
         expect(requestBody).not.toHaveProperty('imageBase64');
     });
+
+    it('subjectId 存在时应传递给后端', () => {
+        const requestBody = buildReanswerRequestBody({
+            questionText: '校正后的题目',
+            language: 'zh',
+            subject: '其他',
+            subjectId: 'subj-123',
+            imagePreview: null,
+        });
+
+        expect(requestBody.subjectId).toBe('subj-123');
+    });
+
+    it('subjectId 不存在时不应包含 subjectId 字段', () => {
+        const requestBody = buildReanswerRequestBody({
+            questionText: '校正后的题目',
+            language: 'zh',
+            subject: '数学',
+            imagePreview: null,
+        });
+
+        expect(requestBody).not.toHaveProperty('subjectId');
+    });
 });

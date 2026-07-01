@@ -98,6 +98,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                 questionText: data.questionText,
                 language,
                 subject: data.subject,
+                subjectId: data.subjectId,
                 imagePreview,
                 gradeSemester: data.gradeSemester,
             });

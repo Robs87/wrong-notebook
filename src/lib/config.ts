@@ -37,10 +37,12 @@ export interface AppConfig {
     prompts?: {
         analyze?: string;
         similar?: string;
+        reanswer?: string;
         // 按科目路由：key 为科目名称（与错题本中创建的科目名一致）
         bySubject?: Record<string, {
             analyze?: string;
             similar?: string;
+            reanswer?: string;
         }>;
     };
     timeouts?: {

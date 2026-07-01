@@ -4,6 +4,8 @@ import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { badRequest, createErrorResponse, ErrorCode } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { prisma } from "@/lib/prisma";
+import { inferSubjectFromName } from "@/lib/knowledge-tags";
 
 const logger = createLogger('api:reanswer');
 
@@ -20,12 +22,27 @@ export async function POST(req: Request) {
 
     try {
         const body = await req.json();
-        const { questionText, language = 'zh', subject, imageBase64, gradeSemester } = body;
+        const { questionText, language = 'zh', subject, subjectId, imageBase64, gradeSemester } = body;
+
+        // 从数据库获取原始科目名（与 analyze/route.ts 保持一致的逻辑）
+        let resolvedSubject: string | null = subject || null;
+        if (subjectId) {
+            try {
+                const subjectRecord = await prisma.subject.findUnique({
+                    where: { id: subjectId }
+                });
+                if (subjectRecord) {
+                    resolvedSubject = subjectRecord.name;
+                }
+            } catch (dbErr) {
+                logger.warn({ subjectId, dbErr }, 'Failed to fetch subject by ID, falling back to request subject');
+            }
+        }
 
         logger.debug({
             questionLength: questionText?.length,
             language,
-            subject,
+            subject: resolvedSubject,
             hasImage: !!imageBase64,
             gradeSemester
         }, 'Reanswer request received');
@@ -38,7 +55,7 @@ export async function POST(req: Request) {
         const aiService = getAIService();
 
         // 根据是否有图片选择不同的重新解题方式
-        const result = await aiService.reanswerQuestion(questionText, language, subject, imageBase64, gradeSemester);
+        const result = await aiService.reanswerQuestion(questionText, language, resolvedSubject, imageBase64, gradeSemester);
 
         logger.info('Reanswer successful');
 
