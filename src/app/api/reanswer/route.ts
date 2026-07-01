@@ -25,7 +25,7 @@ export async function POST(req: Request) {
         const { questionText, language = 'zh', subject, subjectId, imageBase64, gradeSemester } = body;
 
         // 从数据库获取原始科目名（与 analyze/route.ts 保持一致的逻辑）
-        let resolvedSubject: string | null = subject || null;
+        let resolvedSubject = subject;
         if (subjectId) {
             try {
                 const subjectRecord = await prisma.subject.findUnique({
