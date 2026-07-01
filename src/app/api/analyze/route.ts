@@ -51,6 +51,7 @@ export async function POST(req: Request) {
         let userGrade: 7 | 8 | 9 | 10 | 11 | 12 | null = null;
         let userGradeSemester: string | null = null;
         let subjectName: 'math' | 'physics' | 'chemistry' | 'biology' | 'english' | 'chinese' | 'history' | 'geography' | 'politics' | null = null;
+        let rawSubjectName: string | null = null;
 
         if (session?.user?.email) {
             try {
@@ -77,7 +78,8 @@ export async function POST(req: Request) {
 
                     if (subject) {
                         subjectName = inferSubjectFromName(subject.name);
-                        logger.debug({ subjectName, subjectDisplayName: subject.name }, 'Inferred subject');
+                        rawSubjectName = subject.name;
+                        logger.debug({ subjectName, rawSubjectName, subjectDisplayName: subject.name }, 'Inferred subject');
                     }
                 }
             } catch (error) {
@@ -88,6 +90,8 @@ export async function POST(req: Request) {
 
 
         // 将内部科目名称转换为中文科目名称
+        // 如果是标准科目（数学/物理等），使用映射后的中文名；
+        // 如果是非标准科目（一建管理/一建经济等），保留原始名称供 bySubject 路由匹配
         const subjectNameMapping: Record<string, string> = {
             'math': '数学',
             'physics': '物理',
@@ -99,7 +103,7 @@ export async function POST(req: Request) {
             'geography': '地理',
             'politics': '政治',
         };
-        const subjectChinese = subjectName ? subjectNameMapping[subjectName] : null;
+        const subjectChinese = subjectName ? subjectNameMapping[subjectName] : rawSubjectName;
 
         logger.info({ userGrade, userGradeSemester, subject: subjectChinese }, 'Calling AI service for image analysis');
         const aiService = getAIService();
