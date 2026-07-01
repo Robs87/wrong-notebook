@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, ReanswerQuestionResult, GeogebraAnalysisResult } from "./types";
-import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateGeogebraPrompt } from './prompts';
+import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateGeogebraPrompt, resolvePromptTemplate } from './prompts';
 import { getAppConfig } from '../config';
 import { safeParseParsedQuestion } from './schema';
 import { getMathTagsFromDB, getTagsFromDB } from './tag-service';
@@ -173,7 +173,7 @@ export class OpenAIProvider implements AIService {
         const prefetchedEnglishTags = (subject === '英语' || !subject) ? await getTagsFromDB('english') : [];
 
         const systemPrompt = generateAnalyzePrompt(language, grade, subject, {
-            customTemplate: config.prompts?.analyze,
+            customTemplate: resolvePromptTemplate(config, 'analyze', subject),
             prefetchedMathTags,
             prefetchedPhysicsTags,
             prefetchedChemistryTags,
@@ -311,10 +311,10 @@ export class OpenAIProvider implements AIService {
         }
     }
 
-    async generateSimilarQuestion(originalQuestion: string, knowledgePoints: string[], language: 'zh' | 'en' = 'zh', difficulty: DifficultyLevel = 'medium', gradeSemester?: string | null): Promise<ParsedQuestion> {
+    async generateSimilarQuestion(originalQuestion: string, knowledgePoints: string[], language: 'zh' | 'en' = 'zh', difficulty: DifficultyLevel = 'medium', gradeSemester?: string | null, subject?: string | null): Promise<ParsedQuestion> {
         const config = getAppConfig();
         const systemPrompt = generateSimilarQuestionPrompt(language, originalQuestion, knowledgePoints, difficulty, {
-            customTemplate: config.prompts?.similar
+            customTemplate: resolvePromptTemplate(config, 'similar', subject)
         }, gradeSemester);
         const userPrompt = `\nOriginal Question: "${originalQuestion}"\nKnowledge Points: ${knowledgePoints.join(", ")}\n    `;
 

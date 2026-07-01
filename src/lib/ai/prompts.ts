@@ -95,6 +95,23 @@ export function generateGradeInstruction(gradeSemester?: string | null): string 
 }
 
 /**
+ * 按科目解析提示词模板
+ * 优先级：bySubject[科目] > 全局 prompts.analyze/similar > 内置默认模板
+ */
+export function resolvePromptTemplate(
+    config: { prompts?: { analyze?: string; similar?: string; bySubject?: Record<string, { analyze?: string; similar?: string }> } },
+    type: 'analyze' | 'similar',
+    subject?: string | null
+): string | undefined {
+    // 1. 优先查找科目专属模板
+    if (subject && config.prompts?.bySubject?.[subject]?.[type]) {
+        return config.prompts.bySubject[subject][type];
+    }
+    // 2. 回退到全局自定义模板
+    return config.prompts?.[type] || undefined;
+}
+
+/**
  * Options for customizing prompts
  */
 export interface PromptOptions {

@@ -37,6 +37,11 @@ export interface AppConfig {
     prompts?: {
         analyze?: string;
         similar?: string;
+        // 按科目路由：key 为科目名称（与错题本中创建的科目名一致）
+        bySubject?: Record<string, {
+            analyze?: string;
+            similar?: string;
+        }>;
     };
     timeouts?: {
         analyze?: number; // 毫秒
@@ -115,6 +120,7 @@ const DEFAULT_CONFIG: AppConfig = {
     prompts: {
         analyze: '',
         similar: '',
+        bySubject: {},
     },
     timeouts: {
         analyze: 180000,

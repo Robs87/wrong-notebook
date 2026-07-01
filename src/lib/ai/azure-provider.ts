@@ -1,6 +1,6 @@
 import { AzureOpenAI } from "openai";
 import { AIService, ParsedQuestion, DifficultyLevel, ReanswerQuestionResult, GeogebraAnalysisResult } from "./types";
-import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateReanswerPrompt, generateGeogebraPrompt } from './prompts';
+import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateReanswerPrompt, generateGeogebraPrompt, resolvePromptTemplate } from './prompts';
 import { getAppConfig } from '../config';
 import { safeParseParsedQuestion } from './schema';
 import { getMathTagsFromDB, getTagsFromDB } from './tag-service';
@@ -158,7 +158,7 @@ export class AzureOpenAIProvider implements AIService {
         const prefetchedEnglishTags = (subject === '英语' || !subject) ? await getTagsFromDB('english') : [];
 
         const systemPrompt = generateAnalyzePrompt(language, grade, subject, {
-            customTemplate: config.prompts?.analyze,
+            customTemplate: resolvePromptTemplate(config, 'analyze', subject),
             prefetchedMathTags,
             prefetchedPhysicsTags,
             prefetchedChemistryTags,
@@ -235,11 +235,12 @@ export class AzureOpenAIProvider implements AIService {
         knowledgePoints: string[],
         language: 'zh' | 'en' = 'zh',
         difficulty: DifficultyLevel = 'medium',
-        gradeSemester?: string | null
+        gradeSemester?: string | null,
+        subject?: string | null
     ): Promise<ParsedQuestion> {
         const config = getAppConfig();
         const systemPrompt = generateSimilarQuestionPrompt(language, originalQuestion, knowledgePoints, difficulty, {
-            customTemplate: config.prompts?.similar
+            customTemplate: resolvePromptTemplate(config, 'similar', subject)
         }, gradeSemester);
         const userPrompt = `
 Original Question: "${originalQuestion}"

@@ -40,7 +40,8 @@ export async function POST(req: Request) {
             tags,
             language,
             difficulty || 'medium',
-            errorItemWithSubject.gradeSemester
+            errorItemWithSubject.gradeSemester,
+            errorItemWithSubject.subject?.name || null
         );
 
         // Inject the subject from the database with type safety
