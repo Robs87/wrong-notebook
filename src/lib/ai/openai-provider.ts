@@ -71,6 +71,28 @@ export class OpenAIProvider implements AIService {
         });
     }
 
+    /**
+     * 从 API 响应中提取有效文本。
+     * 部分推理模型（如 vLLM 升级后的 agnes-2.0-flash）会将结构化 XML
+     * 输出拆分到 reasoning_content 字段，而非 content。
+     * 策略：如果 content 缺少 <answer_text>，则拼接 content + reasoning_content。
+     */
+    private extractResponseText(message: any): string {
+        const content = message?.content || "";
+        const reasoning = message?.reasoning_content || "";
+
+        if (!content) return reasoning;
+        if (!reasoning) return content;
+
+        // content 缺少关键标签 → 推理模型将 XML 拆到了 reasoning_content
+        if (!content.includes("<answer_text>") && reasoning.includes("<answer_text>")) {
+            logger.warn('content 缺少 <answer_text>，检测到 reasoning_content 拆分，合并两个字段');
+            return reasoning + "\n" + content;
+        }
+
+        return content;
+    }
+
     private extractTag(text: string, tagName: string): string | null {
         const startTag = `<${tagName}>`;
         const endTag = `</${tagName}>`;
@@ -294,7 +316,7 @@ export class OpenAIProvider implements AIService {
                 throw new Error("AI_RESPONSE_ERROR: API returned empty or invalid response");
             }
 
-            const text = response.choices[0]?.message?.content || "";
+            const text = this.extractResponseText(response.choices[0]?.message);
 
             logger.box('🤖 AI Raw Response', text);
 
@@ -345,7 +367,7 @@ export class OpenAIProvider implements AIService {
                 max_tokens: 8192,
             });
 
-            const text = response.choices[0]?.message?.content || "";
+            const text = this.extractResponseText(response.choices[0]?.message);
 
             logger.box('🤖 AI Raw Response', text);
 
@@ -425,7 +447,7 @@ export class OpenAIProvider implements AIService {
                 throw new Error("AI_RESPONSE_ERROR: API returned empty or invalid response");
             }
 
-            const text = response.choices[0]?.message?.content || "";
+            const text = this.extractResponseText(response.choices[0]?.message);
 
             logger.debug({ rawResponse: text }, 'AI raw response');
 
@@ -471,7 +493,7 @@ export class OpenAIProvider implements AIService {
                 max_tokens: 4096,
             });
 
-            const text = response.choices[0]?.message?.content || '';
+            const text = this.extractResponseText(response.choices[0]?.message);
             logger.debug({ rawResponse: text }, 'GeoGebra AI raw response');
 
             if (!text) throw new Error("Empty response from AI");
