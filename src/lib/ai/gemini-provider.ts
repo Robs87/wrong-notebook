@@ -111,10 +111,11 @@ export class GeminiProvider implements AIService {
         const mistakeAnalysis = this.extractTag(text, "mistake_analysis") || "";
         const mistakeStatusRaw = this.extractTag(text, "mistake_status");
 
-        // Basic Validation
-        if (!questionText || !answerText || !analysis) {
+        // Basic Validation - require answer and analysis, questionText is optional
+        // (reanswer template doesn't output <question_text>)
+        if (!answerText || !analysis) {
             logger.error({ rawTextSample: text.substring(0, 500) }, 'Missing critical XML tags');
-            throw new Error("Invalid AI response: Missing critical XML tags (<question_text>, <answer_text>, or <analysis>)");
+            throw new Error("Invalid AI response: Missing critical XML tags");
         }
 
         // Process Subject
@@ -134,9 +135,12 @@ export class GeminiProvider implements AIService {
         const requiresImage = requiresImageRaw?.toLowerCase().trim() === 'true';
         const mistakeStatus = normalizeMistakeStatusForSave(mistakeStatusRaw, wrongAnswerText);
 
+        // Default questionText to empty string if not present (reanswer scenario)
+        const safeQuestionText = questionText || "";
+
         // Construct Result
         const result: ParsedQuestion = {
-            questionText,
+            questionText: safeQuestionText,
             answerText,
             analysis,
             wrongAnswerText,
@@ -330,21 +334,19 @@ export class GeminiProvider implements AIService {
 
             if (!text) throw new Error("Empty response from AI");
 
-            // 解析响应
-            const answerText = this.extractTag(text, "answer_text") || "";
-            const analysis = this.extractTag(text, "analysis") || "";
-            const knowledgePointsRaw = this.extractTag(text, "knowledge_points") || "";
-            const knowledgePointsParsed = knowledgePointsRaw.split(/[,，\n]/).map(k => k.trim()).filter(k => k.length > 0);
-            const wrongAnswerText = this.extractTag(text, "wrong_answer_text") || "";
-            const mistakeAnalysis = this.extractTag(text, "mistake_analysis") || "";
-            const mistakeStatus = normalizeMistakeStatusForSave(
-                this.extractTag(text, "mistake_status"),
-                wrongAnswerText
-            );
+            // Use shared parseResponse for consistent tag extraction with analyze flow
+            const parsedResult = this.parseResponse(text);
 
             logger.info('Reanswer parsed successfully');
 
-            return { answerText, analysis, knowledgePoints: knowledgePointsParsed, wrongAnswerText, mistakeAnalysis, mistakeStatus };
+            return {
+                answerText: parsedResult.answerText,
+                analysis: parsedResult.analysis,
+                knowledgePoints: parsedResult.knowledgePoints,
+                wrongAnswerText: parsedResult.wrongAnswerText || "",
+                mistakeAnalysis: parsedResult.mistakeAnalysis || "",
+                mistakeStatus: parsedResult.mistakeStatus,
+            };
 
         } catch (error) {
             logger.error({ error, stack: error instanceof Error ? error.stack : undefined }, 'Error during reanswer');

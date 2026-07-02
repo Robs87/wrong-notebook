@@ -112,41 +112,45 @@ export class OpenAIProvider implements AIService {
         const mistakeStatusRaw = this.extractTag(text, "mistake_status");
 
         // Basic Validation
-        if (!questionText || !answerText || !analysis) {
-            logger.error({ rawTextSample: text.substring(0, 500) }, 'Missing critical XML tags');
-            throw new Error("Invalid AI response: Missing critical XML tags (<question_text>, <answer_text>, or <analysis>)");
-        }
+        // Basic Validation - require answer and analysis, questionText is optional
+                // (reanswer template doesn't output <question_text>)
+                if (!answerText || !analysis) {
+                    logger.error({ rawTextSample: text.substring(0, 500) }, 'Missing critical XML tags');
+                    throw new Error("Invalid AI response: Missing critical XML tags (<answer_text> or <analysis>)");
+                }
 
-        // Process Subject
-        let subject: ParsedQuestion['subject'] = '其他';
-        const validSubjects: ParsedQuestion['subject'][] = ["数学", "物理", "化学", "生物", "英语", "语文", "历史", "地理", "政治", "其他"];
-        if (subjectRaw && (validSubjects as string[]).includes(subjectRaw)) {
-            subject = subjectRaw as ParsedQuestion['subject'];
-        }
+                // Process Subject
+                let subject: ParsedQuestion['subject'] = '其他';
+                const validSubjects: ParsedQuestion['subject'][] = ["数学", "物理", "化学", "生物", "英语", "语文", "历史", "地理", "政治", "其他"];
+                if (subjectRaw && (validSubjects as string[]).includes(subjectRaw)) {
+                    subject = subjectRaw as ParsedQuestion['subject'];
+                }
 
-        // Process Knowledge Points
-        let knowledgePoints: string[] = [];
-        if (knowledgePointsRaw) {
-            // Split by comma or newline, trim whitespaces
-            knowledgePoints = knowledgePointsRaw.split(/[,，\n]/).map(k => k.trim()).filter(k => k.length > 0);
-        }
+                // Process Knowledge Points
+                let knowledgePoints: string[] = [];
+                if (knowledgePointsRaw) {
+                    knowledgePoints = knowledgePointsRaw.split(/[,，\n]/).map(k => k.trim()).filter(k => k.length > 0);
+                }
 
-        // Process requiresImage (default to false if not present or unrecognized)
-        const requiresImage = requiresImageRaw?.toLowerCase().trim() === 'true';
-        const mistakeStatus = normalizeMistakeStatusForSave(mistakeStatusRaw, wrongAnswerText);
+                // Process requiresImage
+                const requiresImage = requiresImageRaw?.toLowerCase().trim() === 'true';
+                const mistakeStatus = normalizeMistakeStatusForSave(mistakeStatusRaw, wrongAnswerText);
 
-        // Construct Result
-        const result: ParsedQuestion = {
-            questionText,
-            answerText,
-            analysis,
-            wrongAnswerText,
-            mistakeAnalysis,
-            mistakeStatus,
-            subject,
-            knowledgePoints,
-            requiresImage
-        };
+                // Default questionText to empty string if not present (reanswer scenario)
+                const safeQuestionText = questionText || "";
+
+                // Construct Result
+                const result: ParsedQuestion = {
+                    questionText: safeQuestionText,
+                    answerText,
+                    analysis,
+                    wrongAnswerText,
+                    mistakeAnalysis,
+                    mistakeStatus,
+                    subject,
+                    knowledgePoints,
+                    requiresImage
+                };
 
         // Final Schema Validation (just to be safe, though likely compliant by now)
         const validation = safeParseParsedQuestion(result);
@@ -427,21 +431,19 @@ export class OpenAIProvider implements AIService {
 
             if (!text) throw new Error("Empty response from AI");
 
-            // 解析响应
-            const answerText = this.extractTag(text, "answer_text") || "";
-            const analysis = this.extractTag(text, "analysis") || "";
-            const knowledgePointsRaw = this.extractTag(text, "knowledge_points") || "";
-            const knowledgePoints = knowledgePointsRaw.split(/[,，\n]/).map(k => k.trim()).filter(k => k.length > 0);
-            const wrongAnswerText = this.extractTag(text, "wrong_answer_text") || "";
-            const mistakeAnalysis = this.extractTag(text, "mistake_analysis") || "";
-            const mistakeStatus = normalizeMistakeStatusForSave(
-                this.extractTag(text, "mistake_status"),
-                wrongAnswerText
-            );
+            // Use shared parseResponse for consistent tag extraction with analyze flow
+            const parsedResult = this.parseResponse(text);
 
             logger.info('Reanswer parsed successfully');
 
-            return { answerText, analysis, knowledgePoints, wrongAnswerText, mistakeAnalysis, mistakeStatus };
+            return {
+                answerText: parsedResult.answerText,
+                analysis: parsedResult.analysis,
+                knowledgePoints: parsedResult.knowledgePoints,
+                wrongAnswerText: parsedResult.wrongAnswerText || "",
+                mistakeAnalysis: parsedResult.mistakeAnalysis || "",
+                mistakeStatus: parsedResult.mistakeStatus,
+            };
 
         } catch (error) {
             logger.error({ error, stack: error instanceof Error ? error.stack : undefined }, 'Error during reanswer');

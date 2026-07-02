@@ -494,7 +494,7 @@ export const DEFAULT_REANSWER_TEMPLATE = `【角色与核心任务 (ROLE AND COR
 <analysis>
 在此处填写详细的步骤解析。
 * 必须使用简体中文。
-* **直接使用标准的 LaTeX 符号**（如 $\\frac{1}{2}$），**不要**进行 JSON 转义。
+* **直接使用标准的 LaTeX 符号**（如 $\frac{1}{2}$），**不要**进行 JSON 转义。
 * 解析要清晰、完整，适合学生理解。
 </analysis>
 
