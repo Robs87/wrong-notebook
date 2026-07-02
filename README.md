@@ -45,11 +45,36 @@
 
 ## 🚀 快速开始
 
-### 方式一：使用 Docker 部署
+### 方式一：使用 Docker 部署（全新机器，一键配置）
+
+适合在新机器（Unraid / NAS / 云服务器）上部署，自动带一建备考自定义提示词。
+
+```bash
+# 1. 克隆仓库（你的 fork 或上游均可）
+git clone https://github.com/Robs87/wrong-notebook.git
+cd wrong-notebook
+
+# 2. 创建数据目录
+mkdir -p data config
+
+# 3. 运行配置引导脚本（交互式填写 AI 提供商信息）
+node scripts/bootstrap-config.js
+
+# 4. 编辑 docker-compose.yml，设置 NEXTAUTH_SECRET
+#    用 openssl rand -base64 32 生成随机值
+
+# 5. 启动容器
+docker compose up -d
+
+# 6. 默认管理员 admin@localhost / 123456
+#    访问 http://<你的IP>:3000 登录
+```
+
+> `bootstrap-config.js` 会自动读取 `一建备考提示词-config-snippet.json` 中的一建自定义提示词，注入到 `一建管理` 和 `一建经济` 两个科目。后续通过 Web UI 设置页面可修改 AI 提供商和模型。
+
+### 方式二：使用 Docker 部署（上游官方镜像）
 
 #### 1. 启动服务
-
-您可以选择 **直接使用命令** (适合快速测试) 或 **Docker Compose** (适合长期运行)。
 
 **选项 A：直接使用 Docker 命令**
 
