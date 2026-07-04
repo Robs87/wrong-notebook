@@ -273,6 +273,7 @@ export class OpenAIProvider implements AIService {
                         model: this.model,
                         messages,
                         max_tokens: 8192,
+                        ...getDisableThinkingBody(),
                     }),
                 });
 
@@ -305,6 +306,7 @@ export class OpenAIProvider implements AIService {
                     ],
                     // response_format: { type: "json_object" }, // Removing to improve compatibility with 3rd party providers
                     max_tokens: 8192,
+                    extra_body: getDisableThinkingBody(),
                 });
             }
 
@@ -365,6 +367,7 @@ export class OpenAIProvider implements AIService {
                 ],
                 // response_format: { type: "json_object" }, // Removing to improve compatibility with 3rd party providers
                 max_tokens: 8192,
+                extra_body: getDisableThinkingBody(),
             });
 
             const text = this.extractResponseText(response.choices[0]?.message);
@@ -437,6 +440,7 @@ export class OpenAIProvider implements AIService {
                     { role: "user", content: userContent }
                 ],
                 max_tokens: 8192,
+                extra_body: getDisableThinkingBody(),
             });
 
             logger.debug({ response: JSON.stringify(response) }, 'Full API response');
@@ -491,6 +495,7 @@ export class OpenAIProvider implements AIService {
                     { role: "user", content: "请分析上述题目并生成 GeoGebra 演示命令。" }
                 ],
                 max_tokens: 4096,
+                extra_body: getDisableThinkingBody(),
             });
 
             const text = this.extractResponseText(response.choices[0]?.message);
@@ -563,5 +568,20 @@ export class OpenAIProvider implements AIService {
         }
         throw new Error("AI_UNKNOWN_ERROR");
     }
+}
+
+/**
+ * 获取禁用推理模式的 extra_body 参数。
+ * 部分 vLLM 推理模型（如 agnes-2.0-flash）默认启用思考模式，
+ * 返回冗余的 reasoning_content，徒增延迟和 token 消耗。
+ * 通过 chat_template_kwargs.enable_thinking=false 要求服务端跳过推理步骤。
+ * 不支持的 provider 会静默忽略此参数，不影响正常请求。
+ */
+function getDisableThinkingBody(): Record<string, unknown> {
+    return {
+        chat_template_kwargs: {
+            enable_thinking: false,
+        },
+    };
 }
 
