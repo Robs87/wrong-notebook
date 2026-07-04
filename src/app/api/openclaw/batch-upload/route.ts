@@ -117,7 +117,12 @@ async function createErrorItem(
     const tagNames: string[] = Array.isArray(knowledgePoints) ? knowledgePoints : [];
     const tagConnections: { id: string }[] = [];
 
-    const subject = subjectId ? await prisma.subject.findUnique({ where: { id: subjectId } }) : null;
+    const subject = subjectId
+        ? await prisma.subject.findFirst({ where: { id: subjectId, userId } })
+        : null;
+    if (subjectId && !subject) {
+        throw new Error('SUBJECT_NOT_FOUND_OR_FORBIDDEN');
+    }
     const subjectKey = subject ? inferSubjectFromName(subject.name) : null;
 
     const user = await prisma.user.findUnique({
@@ -324,6 +329,22 @@ export async function POST(req: Request) {
                 ErrorCode.USER_NOT_FOUND,
                 'User not found'
             );
+        }
+
+        if (subjectId) {
+            const subject = await prisma.subject.findUnique({
+                where: { id: subjectId },
+                select: { id: true, userId: true },
+            });
+
+            if (!subject || subject.userId !== dbUser.id) {
+                return createErrorResponse(
+                    '无权使用该错题本',
+                    403,
+                    ErrorCode.FORBIDDEN,
+                    'Subject not found or not owned by user'
+                );
+            }
         }
 
         const timeout = parseInt(process.env.OPENCLAW_TIMEOUT || '30000', 10);

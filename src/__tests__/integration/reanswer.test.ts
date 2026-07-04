@@ -9,8 +9,15 @@ const mocks = vi.hoisted(() => ({
     mockAIService: {
         reanswerQuestion: vi.fn(),
     },
+    mockPrismaSubject: {
+        findUnique: vi.fn(),
+    },
+    mockPrismaUser: {
+        findUnique: vi.fn(),
+    },
     mockSession: {
         user: {
+            id: 'user-123',
             email: 'user@example.com',
             name: 'Test User',
         },
@@ -21,6 +28,13 @@ const mocks = vi.hoisted(() => ({
 // Mock AI service
 vi.mock('@/lib/ai', () => ({
     getAIService: vi.fn(() => mocks.mockAIService),
+}));
+
+vi.mock('@/lib/prisma', () => ({
+    prisma: {
+        subject: mocks.mockPrismaSubject,
+        user: mocks.mockPrismaUser,
+    },
 }));
 
 // Mock next-auth
@@ -38,6 +52,11 @@ import { POST } from '@/app/api/reanswer/route';
 describe('/api/reanswer', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.mockPrismaSubject.findUnique.mockResolvedValue({
+            id: 'subject-1',
+            name: '数学',
+            userId: 'user-123',
+        });
     });
 
     describe('POST /api/reanswer (重新回答问题)', () => {
@@ -94,6 +113,28 @@ describe('/api/reanswer', () => {
                 undefined,
                 undefined
             );
+        });
+
+        it('应该拒绝使用其他用户的错题本上下文', async () => {
+            mocks.mockPrismaSubject.findUnique.mockResolvedValueOnce({
+                id: 'subject-1',
+                name: '数学',
+                userId: 'other-user',
+            });
+
+            const request = new Request('http://localhost/api/reanswer', {
+                method: 'POST',
+                body: JSON.stringify({
+                    questionText: '求解 x + 2 = 5',
+                    subjectId: 'subject-1',
+                }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await POST(request);
+
+            expect(response.status).toBe(403);
+            expect(mocks.mockAIService.reanswerQuestion).not.toHaveBeenCalled();
         });
 
         it('应该支持附带图片', async () => {

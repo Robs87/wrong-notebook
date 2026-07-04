@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import { getAppConfig, updateAppConfig } from "@/lib/config";
-import { internalError } from "@/lib/api-errors";
+import { forbidden, internalError, unauthorized } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { OpenAIInstance } from "@/types/api";
 
@@ -8,13 +10,64 @@ const logger = createLogger('api:settings');
 
 export const dynamic = 'force-dynamic';
 
+function maskSecret(value?: string) {
+    return value ? '********' : value;
+}
+
+function sanitizeConfig(config: ReturnType<typeof getAppConfig>, includeSecrets: boolean) {
+    if (includeSecrets) {
+        return config;
+    }
+
+    return {
+        aiProvider: config.aiProvider,
+        allowRegistration: config.allowRegistration,
+        openai: {
+            activeInstanceId: config.openai?.activeInstanceId,
+            instances: (config.openai?.instances || []).map(instance => ({
+                ...instance,
+                apiKey: maskSecret(instance.apiKey),
+            })),
+        },
+        gemini: {
+            baseUrl: config.gemini?.baseUrl,
+            model: config.gemini?.model,
+            apiKey: maskSecret(config.gemini?.apiKey),
+        },
+        azure: {
+            endpoint: config.azure?.endpoint,
+            deploymentName: config.azure?.deploymentName,
+            apiVersion: config.azure?.apiVersion,
+            model: config.azure?.model,
+            apiKey: maskSecret(config.azure?.apiKey),
+        },
+        prompts: config.prompts,
+        timeouts: config.timeouts,
+    };
+}
+
 export async function GET() {
+    const session = await getServerSession(authOptions);
+
+    if (!session?.user) {
+        return unauthorized("Authentication required");
+    }
+
     const config = getAppConfig();
-    // Return full config including API keys since this is an authenticated endpoint
-    return NextResponse.json(config);
+    return NextResponse.json(sanitizeConfig(config, session.user.role === 'admin'));
 }
 
 export async function POST(req: Request) {
+    const session = await getServerSession(authOptions);
+
+    if (!session?.user) {
+        return unauthorized("Authentication required");
+    }
+
+    if (session.user.role !== 'admin') {
+        return forbidden("Admin access required");
+    }
+
     try {
         const body = await req.json();
         const currentConfig = getAppConfig();
@@ -47,11 +100,10 @@ export async function POST(req: Request) {
         }
 
         const updatedConfig = updateAppConfig(body);
-        return NextResponse.json(updatedConfig);
+        return NextResponse.json(sanitizeConfig(updatedConfig, true));
     } catch (error) {
         logger.error({ error }, 'Failed to update settings');
         return internalError("Failed to update settings");
     }
 }
-
 

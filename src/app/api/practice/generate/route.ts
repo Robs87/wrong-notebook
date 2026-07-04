@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { getAIService } from "@/lib/ai";
-import { notFound, internalError, unauthorized } from "@/lib/api-errors";
+import { forbidden, notFound, internalError, unauthorized } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('api:practice:generate');
@@ -17,6 +17,19 @@ export async function POST(req: Request) {
 
     try {
         const { errorItemId, language, difficulty } = await req.json();
+        let userId: string | undefined = session.user.id;
+
+        if (!userId && session.user.email) {
+            const user = await prisma.user.findUnique({
+                where: { email: session.user.email },
+                select: { id: true },
+            });
+            userId = user?.id;
+        }
+
+        if (!userId) {
+            return unauthorized("Authentication required");
+        }
 
         const errorItemWithSubject = await prisma.errorItem.findUnique({
             where: { id: errorItemId },
@@ -25,6 +38,10 @@ export async function POST(req: Request) {
 
         if (!errorItemWithSubject) {
             return notFound("Item not found");
+        }
+
+        if (errorItemWithSubject.userId !== userId) {
+            return forbidden("Not authorized to access this item");
         }
 
         let tags: string[] = [];

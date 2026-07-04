@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('api:ai:models');
@@ -67,6 +69,14 @@ async function fetchOpenAIModels(apiKey: string, baseUrl: string): Promise<Model
 
 export async function GET(req: NextRequest) {
     try {
+        const session = await getServerSession(authOptions);
+        if (!session?.user) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+        if (session.user.role !== 'admin') {
+            return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+        }
+
         const { searchParams } = new URL(req.url);
         const provider = searchParams.get('provider');
         const apiKey = searchParams.get('apiKey');

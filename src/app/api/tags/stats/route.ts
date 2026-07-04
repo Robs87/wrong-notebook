@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { authOptions } from "@/lib/auth";
+import { getServerSession } from "next-auth";
+import { unauthorized } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('api:tags:stats');
@@ -12,9 +15,18 @@ export const dynamic = "force-dynamic";
  * 获取标签使用频率统计
  */
 export async function GET(req: Request) {
+    const session = await getServerSession(authOptions);
+
+    if (!session?.user?.id) {
+        return unauthorized("Authentication required");
+    }
+
     try {
-        // 获取所有错题的知识点
+        // 获取当前用户错题的知识点
         const errorItems = await prisma.errorItem.findMany({
+            where: {
+                userId: session.user.id,
+            },
             select: {
                 knowledgePoints: true,
             },

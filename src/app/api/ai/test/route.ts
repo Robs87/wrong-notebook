@@ -98,6 +98,9 @@ export async function POST(request: NextRequest) {
         if (!session?.user) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
+        if (session.user.role !== 'admin') {
+            return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+        }
 
         const body: AITestRequest = await request.json();
         const { provider, apiKey, baseUrl, model, endpoint, deploymentName, apiVersion, language = 'zh' } = body;

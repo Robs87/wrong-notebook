@@ -74,6 +74,7 @@ describe('/api/analyze', () => {
             };
             mocks.mockAIService.analyzeImage.mockResolvedValue(aiResult);
             mocks.mockPrismaUser.findUnique.mockResolvedValue({
+                id: 'user-123',
                 educationStage: 'junior_high',
                 enrollmentYear: 2024,
             });
@@ -143,11 +144,13 @@ describe('/api/analyze', () => {
 
         it('应该关联到指定的科目', async () => {
             mocks.mockPrismaUser.findUnique.mockResolvedValue({
+                id: 'user-123',
                 educationStage: 'junior_high',
                 enrollmentYear: 2024,
             });
             mocks.mockPrismaSubject.findUnique.mockResolvedValue({
                 name: '物理',
+                userId: 'user-123',
             });
             mocks.mockAIService.analyzeImage.mockResolvedValue({
                 questionText: '物理题目',
@@ -169,6 +172,33 @@ describe('/api/analyze', () => {
             const response = await POST(request);
 
             expect(response.status).toBe(200);
+        });
+
+        it('应该拒绝使用其他用户的科目进行分析', async () => {
+            mocks.mockPrismaUser.findUnique.mockResolvedValue({
+                id: 'user-123',
+                educationStage: 'junior_high',
+                enrollmentYear: 2024,
+            });
+            mocks.mockPrismaSubject.findUnique.mockResolvedValue({
+                name: '物理',
+                userId: 'other-user',
+            });
+
+            const request = new Request('http://localhost/api/analyze', {
+                method: 'POST',
+                body: JSON.stringify({
+                    imageBase64: 'data:image/png;base64,test...',
+                    language: 'zh',
+                    subjectId: 'subject-physics-id',
+                }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await POST(request);
+
+            expect(response.status).toBe(403);
+            expect(mocks.mockAIService.analyzeImage).not.toHaveBeenCalled();
         });
 
         it('应该支持英文语言', async () => {

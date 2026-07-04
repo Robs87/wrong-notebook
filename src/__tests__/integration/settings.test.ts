@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
         ...config,
         aiProvider: config.aiProvider || 'gemini',
     })),
+    mockGetServerSession: vi.fn(),
 }));
 
 // Mock config module
@@ -41,12 +42,27 @@ vi.mock('@/lib/config', () => ({
     updateAppConfig: mocks.mockUpdateAppConfig,
 }));
 
+vi.mock('next-auth', () => ({
+    getServerSession: mocks.mockGetServerSession,
+}));
+
+vi.mock('@/lib/auth', () => ({
+    authOptions: {},
+}));
+
 // Import after mocks
 import { GET, POST } from '@/app/api/settings/route';
 
 describe('/api/settings', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.mockGetServerSession.mockResolvedValue({
+            user: {
+                id: 'admin-1',
+                email: 'admin@example.com',
+                role: 'admin',
+            },
+        });
     });
 
     describe('GET /api/settings', () => {
@@ -70,6 +86,31 @@ describe('/api/settings', () => {
             expect(data.gemini.model).toBe('gemini-2.5-flash');
         });
 
+        it('普通用户应该只能看到脱敏后的 API Key', async () => {
+            mocks.mockGetServerSession.mockResolvedValueOnce({
+                user: {
+                    id: 'user-1',
+                    email: 'user@example.com',
+                    role: 'user',
+                },
+            });
+
+            const response = await GET();
+            const data = await response.json();
+
+            expect(response.status).toBe(200);
+            expect(data.openai.instances[0].apiKey).toBe('********');
+            expect(data.gemini.apiKey).toBe('********');
+        });
+
+        it('未登录应该拒绝访问配置', async () => {
+            mocks.mockGetServerSession.mockResolvedValueOnce(null);
+
+            const response = await GET();
+
+            expect(response.status).toBe(401);
+        });
+
         it('应该返回注册开关状态', async () => {
             const response = await GET();
             const data = await response.json();
@@ -79,6 +120,27 @@ describe('/api/settings', () => {
     });
 
     describe('POST /api/settings', () => {
+        it('普通用户不允许更新配置', async () => {
+            mocks.mockGetServerSession.mockResolvedValueOnce({
+                user: {
+                    id: 'user-1',
+                    email: 'user@example.com',
+                    role: 'user',
+                },
+            });
+
+            const request = new Request('http://localhost/api/settings', {
+                method: 'POST',
+                body: JSON.stringify({ aiProvider: 'openai' }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await POST(request);
+
+            expect(response.status).toBe(403);
+            expect(mocks.mockUpdateAppConfig).not.toHaveBeenCalled();
+        });
+
         it('应该成功更新 AI 提供商', async () => {
             const request = new Request('http://localhost/api/settings', {
                 method: 'POST',

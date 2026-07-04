@@ -139,6 +139,12 @@ describe('/api/error-items', () => {
         });
 
         it('应该成功创建错题并关联到科目', async () => {
+            mocks.mockPrismaSubject.findUnique.mockResolvedValue({
+                id: 'subject-math-id',
+                name: '数学',
+                userId: 'user-123',
+            });
+
             const errorItemData = {
                 questionText: '计算 1 + 1',
                 answerText: '2',
@@ -167,6 +173,32 @@ describe('/api/error-items', () => {
 
             expect(response.status).toBe(201);
             expect(data.subjectId).toBe('subject-math-id');
+        });
+
+        it('应该拒绝创建到其他用户的错题本', async () => {
+            mocks.mockPrismaSubject.findUnique.mockResolvedValue({
+                id: 'subject-other-id',
+                name: '数学',
+                userId: 'other-user',
+            });
+
+            const request = new Request('http://localhost/api/error-items', {
+                method: 'POST',
+                body: JSON.stringify({
+                    questionText: '计算 1 + 1',
+                    answerText: '2',
+                    analysis: '简单加法',
+                    knowledgePoints: ['加法'],
+                    originalImageUrl: 'data:image/png;base64,test...',
+                    subjectId: 'subject-other-id',
+                }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await POST(request);
+
+            expect(response.status).toBe(403);
+            expect(mocks.mockPrismaErrorItem.create).not.toHaveBeenCalled();
         });
 
         it('应该成功创建错题并设置年级学期', async () => {

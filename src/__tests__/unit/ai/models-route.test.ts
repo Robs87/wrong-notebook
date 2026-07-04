@@ -21,6 +21,18 @@ vi.mock('@/lib/logger', () => ({
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
+const authMocks = vi.hoisted(() => ({
+    mockGetServerSession: vi.fn(),
+}));
+
+vi.mock('next-auth', () => ({
+    getServerSession: authMocks.mockGetServerSession,
+}));
+
+vi.mock('@/lib/auth', () => ({
+    authOptions: {},
+}));
+
 import { GET } from '@/app/api/ai/models/route';
 
 function makeRequest(params: Record<string, string>): NextRequest {
@@ -34,6 +46,39 @@ function makeRequest(params: Record<string, string>): NextRequest {
 describe('GET /api/ai/models - Gemini provider', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        authMocks.mockGetServerSession.mockResolvedValue({
+            user: {
+                id: 'admin-1',
+                email: 'admin@example.com',
+                role: 'admin',
+            },
+        });
+    });
+
+    it('未登录应该拒绝获取模型列表', async () => {
+        authMocks.mockGetServerSession.mockResolvedValueOnce(null);
+
+        const req = makeRequest({ provider: 'gemini', apiKey: 'test-key' });
+        const res = await GET(req);
+
+        expect(res.status).toBe(401);
+        expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('普通用户应该拒绝获取模型列表', async () => {
+        authMocks.mockGetServerSession.mockResolvedValueOnce({
+            user: {
+                id: 'user-1',
+                email: 'user@example.com',
+                role: 'user',
+            },
+        });
+
+        const req = makeRequest({ provider: 'gemini', apiKey: 'test-key' });
+        const res = await GET(req);
+
+        expect(res.status).toBe(403);
+        expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('应该正确获取并返回 Gemini 视觉模型列表', async () => {
@@ -165,6 +210,13 @@ describe('GET /api/ai/models - Gemini provider', () => {
 describe('GET /api/ai/models - OpenAI provider', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        authMocks.mockGetServerSession.mockResolvedValue({
+            user: {
+                id: 'admin-1',
+                email: 'admin@example.com',
+                role: 'admin',
+            },
+        });
     });
 
     it('应该正确获取并返回 OpenAI 视觉模型列表', async () => {

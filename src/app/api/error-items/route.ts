@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { calculateGrade } from "@/lib/grade-calculator";
-import { unauthorized, internalError } from "@/lib/api-errors";
+import { forbidden, unauthorized, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { inferSubjectFromName } from "@/lib/knowledge-tags";
@@ -112,8 +112,13 @@ export async function POST(req: Request) {
         const tagNames: string[] = Array.isArray(knowledgePoints) ? knowledgePoints : [];
         const tagConnections: { id: string }[] = [];
 
-        // 推断学科
-        const subject = await prisma.subject.findUnique({ where: { id: subjectId || '' } });
+        // 推断学科，并确保传入的错题本属于当前用户
+        const subject = subjectId
+            ? await prisma.subject.findUnique({ where: { id: subjectId } })
+            : null;
+        if (subjectId && (!subject || subject.userId !== user.id)) {
+            return forbidden("Not authorized to use this notebook");
+        }
         const subjectKey = inferSubjectFromName(subject?.name ?? null) || 'other';
         logger.debug({ subjectId, subjectName: subject?.name, subjectKey }, 'Subject inferred');
 

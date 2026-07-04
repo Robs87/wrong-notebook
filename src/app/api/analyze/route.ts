@@ -5,7 +5,7 @@ import { getServerSession } from "next-auth";
 import { calculateGradeNumber, inferSubjectFromName } from "@/lib/knowledge-tags";
 import { calculateGrade } from "@/lib/grade-calculator";
 import { prisma } from "@/lib/prisma";
-import { badRequest, internalError, createErrorResponse, ErrorCode } from "@/lib/api-errors";
+import { badRequest, forbidden, internalError, createErrorResponse, ErrorCode } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('api:analyze');
@@ -58,7 +58,7 @@ export async function POST(req: Request) {
                 // 获取用户信息
                 const user = await prisma.user.findUnique({
                     where: { email: session.user.email },
-                    select: { educationStage: true, enrollmentYear: true }
+                    select: { id: true, educationStage: true, enrollmentYear: true }
                 });
 
                 if (user) {
@@ -73,8 +73,12 @@ export async function POST(req: Request) {
                 if (subjectId) {
                     const subject = await prisma.subject.findUnique({
                         where: { id: subjectId },
-                        select: { name: true }
+                        select: { name: true, userId: true }
                     });
+
+                    if (!subject || !user || subject.userId !== user.id) {
+                        return forbidden("Not authorized to use this notebook");
+                    }
 
                     if (subject) {
                         subjectName = inferSubjectFromName(subject.name);

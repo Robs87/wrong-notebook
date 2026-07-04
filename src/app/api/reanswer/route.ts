@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getAIService } from "@/lib/ai";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
-import { badRequest, createErrorResponse, ErrorCode } from "@/lib/api-errors";
+import { badRequest, createErrorResponse, ErrorCode, forbidden, unauthorized } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { inferSubjectFromName } from "@/lib/knowledge-tags";
@@ -15,14 +15,27 @@ export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
 
     // 认证检查
-    if (!session) {
+    if (!session?.user) {
         logger.warn('Unauthorized access attempt');
-        return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+        return unauthorized();
     }
 
     try {
         const body = await req.json();
         const { questionText, language = 'zh', subject, subjectId, imageBase64, gradeSemester } = body;
+        let userId: string | undefined = session.user.id;
+
+        if (!userId && session.user.email) {
+            const user = await prisma.user.findUnique({
+                where: { email: session.user.email },
+                select: { id: true },
+            });
+            userId = user?.id;
+        }
+
+        if (!userId) {
+            return unauthorized();
+        }
 
         // 从数据库获取原始科目名（与 analyze/route.ts 保持一致的逻辑）
         let resolvedSubject = subject;
@@ -31,6 +44,9 @@ export async function POST(req: Request) {
                 const subjectRecord = await prisma.subject.findUnique({
                     where: { id: subjectId }
                 });
+                if (!subjectRecord || subjectRecord.userId !== userId) {
+                    return forbidden("Not authorized to access this subject");
+                }
                 if (subjectRecord) {
                     resolvedSubject = subjectRecord.name;
                 }

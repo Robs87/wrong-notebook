@@ -44,8 +44,12 @@ import { GET as GET_SUGGESTIONS } from '@/app/api/tags/suggestions/route';
 describe('/api/tags', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        // Default: no session
-        mocks.mockGetServerSession.mockResolvedValue(null);
+        mocks.mockGetServerSession.mockResolvedValue({
+            user: {
+                id: 'user-1',
+                email: 'test@example.com',
+            },
+        });
     });
 
     describe('GET /api/tags/stats (标签统计)', () => {
@@ -62,6 +66,10 @@ describe('/api/tags', () => {
             const data = await response.json();
 
             expect(response.status).toBe(200);
+            expect(mocks.mockPrismaErrorItem.findMany).toHaveBeenCalledWith({
+                where: { userId: 'user-1' },
+                select: { knowledgePoints: true },
+            });
             expect(data.stats).toBeDefined();
             expect(data.total).toBe(3);
             expect(data.uniqueTags).toBeGreaterThan(0);
@@ -170,6 +178,16 @@ describe('/api/tags', () => {
 
             expect(response.status).toBe(500);
             expect(data.message).toBe('Failed to get tag statistics');
+        });
+
+        it('未登录应该拒绝访问标签统计', async () => {
+            mocks.mockGetServerSession.mockResolvedValueOnce(null);
+
+            const request = new Request('http://localhost/api/tags/stats');
+            const response = await GET_STATS(request);
+
+            expect(response.status).toBe(401);
+            expect(mocks.mockPrismaErrorItem.findMany).not.toHaveBeenCalled();
         });
     });
 
