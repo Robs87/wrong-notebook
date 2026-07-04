@@ -285,7 +285,7 @@ export class OpenAIProvider implements AIService {
 
                 response = await res.json();
             } else {
-                response = await this.openai.chat.completions.create({
+                const params = {
                     model: this.model,
                     messages: [
                         {
@@ -306,8 +306,9 @@ export class OpenAIProvider implements AIService {
                     ],
                     // response_format: { type: "json_object" }, // Removing to improve compatibility with 3rd party providers
                     max_tokens: 8192,
-                    extra_body: getDisableThinkingBody(),
-                });
+                    ...getDisableThinkingBody(),
+                } as const;
+                response = await this.openai.chat.completions.create(params as any);
             }
 
             logger.box('📦 Full API Response', JSON.stringify(response, null, 2));
@@ -359,7 +360,7 @@ export class OpenAIProvider implements AIService {
         logger.box('📝 User Prompt', userPrompt);
 
         try {
-            const response = await this.openai.chat.completions.create({
+            const params = {
                 model: this.model,
                 messages: [
                     { role: "system", content: systemPrompt },
@@ -367,8 +368,9 @@ export class OpenAIProvider implements AIService {
                 ],
                 // response_format: { type: "json_object" }, // Removing to improve compatibility with 3rd party providers
                 max_tokens: 8192,
-                extra_body: getDisableThinkingBody(),
-            });
+                ...getDisableThinkingBody(),
+            } as const;
+            const response = await this.openai.chat.completions.create(params as any);
 
             const text = this.extractResponseText(response.choices[0]?.message);
 
@@ -433,15 +435,16 @@ export class OpenAIProvider implements AIService {
             };
             logger.debug({ requestParams }, 'Request parameters');
 
-            const response = await this.openai.chat.completions.create({
+            const params = {
                 model: this.model,
                 messages: [
                     { role: "system", content: prompt },
                     { role: "user", content: userContent }
                 ],
                 max_tokens: 8192,
-                extra_body: getDisableThinkingBody(),
-            });
+                ...getDisableThinkingBody(),
+            } as const;
+            const response = await this.openai.chat.completions.create(params as any);
 
             logger.debug({ response: JSON.stringify(response) }, 'Full API response');
 
@@ -488,15 +491,16 @@ export class OpenAIProvider implements AIService {
         }, 'GeoGebra Analysis Request');
 
         try {
-            const response = await this.openai.chat.completions.create({
+            const params = {
                 model: this.model,
                 messages: [
                     { role: "system", content: prompt },
                     { role: "user", content: "请分析上述题目并生成 GeoGebra 演示命令。" }
                 ],
                 max_tokens: 4096,
-                extra_body: getDisableThinkingBody(),
-            });
+                ...getDisableThinkingBody(),
+            } as const;
+            const response = await this.openai.chat.completions.create(params as any);
 
             const text = this.extractResponseText(response.choices[0]?.message);
             logger.debug({ rawResponse: text }, 'GeoGebra AI raw response');
