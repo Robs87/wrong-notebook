@@ -365,7 +365,7 @@ describe('/api/user', () => {
                     name: 'No Email User',
                 },
                 expires: '2025-12-31',
-            } as any);
+            } as never);
 
             const response = await GET();
             const data = await response.json();

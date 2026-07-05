@@ -31,13 +31,6 @@ interface KnowledgeFilterProps {
     className?: string;
 }
 
-// 年级编号到学期名称的映射 (用于根据用户入学年份计算当前年级)
-const EDUCATION_GRADE_MAP: Record<string, number[]> = {
-    'primary': [1, 2, 3, 4, 5, 6],
-    'junior_high': [7, 8, 9],
-    'senior_high': [10, 11, 12],
-};
-
 // 年级编号到学期key的映射
 // 注意：小学目前数据库中只存储了"一年级"这种粒度，没有分上下册，后续如果有变化需要更新这里
 const GRADE_TO_SEMESTERS: Record<number, string[]> = {
@@ -69,9 +62,6 @@ export function KnowledgeFilter({
     // 从数据库加载的标签树
     const [tagTree, setTagTree] = useState<TagTreeNode[]>([]);
     const [loading, setLoading] = useState(true);
-
-    // 用户信息 (教育阶段和入学年份)
-    const [userInfo, setUserInfo] = useState<{ educationStage?: string; enrollmentYear?: number }>({});
 
     // 可用的年级学期选项 (根据用户信息过滤)
     const [availableGrades, setAvailableGrades] = useState<string[]>([]);
@@ -149,7 +139,6 @@ export function KnowledgeFilter({
             try {
                 // 1. 获取用户信息
                 const user = await apiClient.get<{ educationStage?: string; enrollmentYear?: number }>('/api/user');
-                setUserInfo(user);
 
                 // 2. 生成可用年级
                 const grades = generateAvailableGrades(user.educationStage, user.enrollmentYear);

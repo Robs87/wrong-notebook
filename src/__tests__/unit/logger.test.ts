@@ -230,7 +230,7 @@ describe('logger module', () => {
             const { createLogger } = await import('@/lib/logger');
             const logger = createLogger('test');
 
-            const circularObj: any = { a: 1 };
+            const circularObj: { a: number; self?: unknown } = { a: 1 };
             circularObj.self = circularObj;
 
             // 循环引用会导致 JSON.stringify 失败，但不应该崩溃

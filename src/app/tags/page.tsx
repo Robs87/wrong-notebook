@@ -12,6 +12,7 @@ import { BackButton } from "@/components/ui/back-button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiClient } from "@/lib/api-client";
+import { getErrorMessage } from "@/lib/error-utils";
 import { TagStats, TagStatsResponse } from "@/types/api";
 
 // 标签树节点类型
@@ -65,6 +66,10 @@ export default function TagsPage() {
     const [gradeOptions, setGradeOptions] = useState<Array<{ id: string; name: string }>>([]);
     const [newTagName, setNewTagName] = useState("");
     const [submitting, setSubmitting] = useState(false);
+
+    const getSubjectLabel = (key: SubjectKey, fallback: string) => {
+        return (t.tags?.subjects as Record<string, string | undefined> | undefined)?.[key] || fallback;
+    };
 
     // 展开状态
     const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
@@ -155,8 +160,8 @@ export default function TagsPage() {
             await fetchCustomTags();
             await fetchTags(newTagSubject);
             alert(t.tags?.custom?.success || "Tag added successfully!");
-        } catch (error: any) {
-            if (error?.message?.includes('409')) {
+        } catch (error) {
+            if (getErrorMessage(error).includes('409')) {
                 alert(t.tags?.custom?.exists || "Tag already exists");
             } else {
                 alert("Failed to add tag");
@@ -266,7 +271,7 @@ export default function TagsPage() {
         return (
             <>
                 {SUBJECTS.map(({ key, name }) => {
-                    const subjectName = (t.tags?.subjects as any)?.[key] || name;
+                    const subjectName = getSubjectLabel(key, name);
                     const isExpanded = expandedNodes[`subject-${key}`];
                     const tags = tagsBySubject[key];
 
@@ -328,7 +333,7 @@ export default function TagsPage() {
                                 <SelectTrigger className="w-[120px]"><SelectValue /></SelectTrigger>
                                 <SelectContent>
                                     {SUBJECTS.map(({ key, name }) => (
-                                        <SelectItem key={key} value={key}>{(t.tags?.subjects as any)?.[key] || name}</SelectItem>
+                                        <SelectItem key={key} value={key}>{getSubjectLabel(key, name)}</SelectItem>
                                     ))}
                                 </SelectContent>
                             </Select>
@@ -389,7 +394,7 @@ export default function TagsPage() {
 
                         return (
                             <Card key={key}>
-                                <CardHeader><CardTitle className="text-lg">{(t.tags?.subjects as any)?.[key] || name} ({tags.length})</CardTitle></CardHeader>
+                                <CardHeader><CardTitle className="text-lg">{getSubjectLabel(key, name)} ({tags.length})</CardTitle></CardHeader>
                                 <CardContent className="space-y-4">
                                     {groupKeys.map(groupName => (
                                         <div key={groupName} className="space-y-2">

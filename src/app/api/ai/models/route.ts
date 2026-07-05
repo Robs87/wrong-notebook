@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
+import { getErrorMessage } from '@/lib/error-utils';
 
 const logger = createLogger('api:ai:models');
 
@@ -9,6 +10,10 @@ interface ModelInfo {
     id: string;
     name: string;
     owned_by?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
 }
 
 // 从模型 ID 中提取短名称
@@ -31,9 +36,11 @@ async function fetchGeminiModels(apiKey: string, baseUrl: string): Promise<Model
     }
 
     const data = await response.json();
-    return (data.models || [])
-        .map((m: any) => {
-            const id = extractModelName(m.name);
+    const models = isRecord(data) && Array.isArray(data.models) ? data.models : [];
+    return models
+        .filter((model): model is { name: string } => isRecord(model) && typeof model.name === 'string')
+        .map((model) => {
+            const id = extractModelName(model.name);
             return {
                 id,
                 name: id,
@@ -58,9 +65,11 @@ async function fetchOpenAIModels(apiKey: string, baseUrl: string): Promise<Model
     }
 
     const data = await response.json();
+    const models = isRecord(data) && Array.isArray(data.data) ? data.data : [];
 
-    return (data.data || [])
-        .map((model: any) => ({
+    return models
+        .filter((model): model is { id: string; owned_by?: string } => isRecord(model) && typeof model.id === 'string')
+        .map((model) => ({
             id: model.id,
             name: model.id,
             owned_by: model.owned_by,
@@ -102,10 +111,10 @@ export async function GET(req: NextRequest) {
 
         return NextResponse.json({ models });
 
-    } catch (error: any) {
+    } catch (error) {
         logger.error({ error }, 'Error fetching models');
         return NextResponse.json(
-            { error: error.message || 'Internal server error', models: [] },
+            { error: getErrorMessage(error, 'Internal server error'), models: [] },
             { status: 200 } // Return 200 with empty models to allow manual input
         );
     }

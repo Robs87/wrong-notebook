@@ -5,7 +5,6 @@ import { getServerSession } from "next-auth";
 import { badRequest, createErrorResponse, ErrorCode, forbidden, unauthorized } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { inferSubjectFromName } from "@/lib/knowledge-tags";
 
 const logger = createLogger('api:reanswer');
 

@@ -154,7 +154,7 @@ describe('/api/stats', () => {
             vi.mocked(getServerSession).mockResolvedValue({
                 user: undefined,
                 expires: '2025-12-31',
-            } as any);
+            } as never);
 
             const request = new Request('http://localhost/api/stats/practice');
             const response = await GET_PRACTICE_STATS(request);
@@ -300,7 +300,7 @@ describe('/api/stats', () => {
             vi.mocked(getServerSession).mockResolvedValue({
                 user: undefined,
                 expires: '2025-12-31',
-            } as any);
+            } as never);
 
             const request = new Request('http://localhost/api/error-items/clear', {
                 method: 'DELETE',

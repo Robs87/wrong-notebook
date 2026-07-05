@@ -11,7 +11,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 
 export default function LoginPage() {
     const router = useRouter();
-    const { t, language } = useLanguage();
+    const { t } = useLanguage();
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [error, setError] = useState("");
@@ -35,7 +35,7 @@ export default function LoginPage() {
                 router.push("/");
                 router.refresh();
             }
-        } catch (error) {
+        } catch {
             setError(t.auth?.login?.error || 'An error occurred');
         } finally {
             setLoading(false);

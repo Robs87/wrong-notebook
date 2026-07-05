@@ -47,7 +47,7 @@ export async function POST(req: Request) {
         let tags: string[] = [];
         try {
             tags = JSON.parse(errorItemWithSubject.knowledgePoints || "[]");
-        } catch (e) {
+        } catch {
             tags = [];
         }
 
@@ -63,8 +63,12 @@ export async function POST(req: Request) {
 
         // Inject the subject from the database with type safety
         const validSubjects = ["数学", "物理", "化学", "生物", "英语", "语文", "历史", "地理", "政治", "其他"] as const;
+        type ValidSubject = typeof validSubjects[number];
+        const isValidSubject = (value: string): value is ValidSubject => {
+            return (validSubjects as readonly string[]).includes(value);
+        };
         const subjectName = errorItemWithSubject.subject?.name || "其他";
-        similarQuestion.subject = validSubjects.includes(subjectName as any) ? subjectName as typeof validSubjects[number] : "其他";
+        similarQuestion.subject = isValidSubject(subjectName) ? subjectName : "其他";
 
         return NextResponse.json(similarQuestion);
     } catch (error) {

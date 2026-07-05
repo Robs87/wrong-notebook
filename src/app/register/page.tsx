@@ -9,11 +9,12 @@ import Link from "next/link";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { Eye, EyeOff, Loader2, AlertCircle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import { getErrorDataMessage } from "@/lib/error-utils";
 import { RegisterRequest } from "@/types/api";
 
 export default function RegisterPage() {
     const router = useRouter();
-    const { t, language } = useLanguage();
+    const { t } = useLanguage();
     const [name, setName] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
@@ -54,7 +55,7 @@ export default function RegisterPage() {
         }
 
         try {
-            await apiClient.post<any, RegisterRequest>("/api/register", {
+            await apiClient.post<unknown, RegisterRequest>("/api/register", {
                 name,
                 email,
                 password,
@@ -64,8 +65,8 @@ export default function RegisterPage() {
 
             alert(t.auth?.register?.success || 'Registration successful! Please login');
             router.push("/login");
-        } catch (error: any) {
-            let errorMsg = error.data?.message;
+        } catch (error) {
+            let errorMsg = getErrorDataMessage(error);
             if (errorMsg === 'User with this email already exists') {
                 errorMsg = t.auth?.register?.emailExists || errorMsg;
             } else {

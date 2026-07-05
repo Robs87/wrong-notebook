@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
@@ -24,13 +24,7 @@ export default function NotebookDetailPage() {
     const [loading, setLoading] = useState(true);
     const [renameDialogOpen, setRenameDialogOpen] = useState(false);
 
-    useEffect(() => {
-        if (params.id) {
-            fetchNotebook(params.id as string);
-        }
-    }, [params.id]);
-
-    const fetchNotebook = async (id: string) => {
+    const fetchNotebook = useCallback(async (id: string) => {
         try {
             const data = await apiClient.get<Notebook>(`/api/notebooks/${id}`);
             setNotebook(data);
@@ -41,7 +35,13 @@ export default function NotebookDetailPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [router, t.notebooks?.notFound]);
+
+    useEffect(() => {
+        if (params.id) {
+            fetchNotebook(params.id as string);
+        }
+    }, [fetchNotebook, params.id]);
 
     const handleRename = async (name: string) => {
         if (!notebook) return;

@@ -93,11 +93,11 @@ describe('/api/analytics', () => {
 
             expect(response.status).toBe(200);
 
-            const mathStat = data.subjectStats.find((s: any) => s.name === '数学');
+            const mathStat = data.subjectStats.find((s: { name: string; value: number }) => s.name === '数学');
             expect(mathStat).toBeDefined();
             expect(mathStat.value).toBe(3);
 
-            const physicsStat = data.subjectStats.find((s: any) => s.name === '物理');
+            const physicsStat = data.subjectStats.find((s: { name: string; value: number }) => s.name === '物理');
             expect(physicsStat).toBeDefined();
             expect(physicsStat.value).toBe(1);
         });
@@ -115,7 +115,7 @@ describe('/api/analytics', () => {
 
             expect(response.status).toBe(200);
 
-            const unknownStat = data.subjectStats.find((s: any) => s.name === 'Unknown');
+            const unknownStat = data.subjectStats.find((s: { name: string; value: number }) => s.name === 'Unknown');
             expect(unknownStat).toBeDefined();
             expect(unknownStat.value).toBe(1);
         });
@@ -177,7 +177,7 @@ describe('/api/analytics', () => {
             vi.mocked(getServerSession).mockResolvedValue({
                 user: undefined,
                 expires: '2025-12-31',
-            } as any);
+            } as never);
 
             const request = new Request('http://localhost/api/analytics');
             const response = await GET(request);

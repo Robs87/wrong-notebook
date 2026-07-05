@@ -118,7 +118,7 @@ function formatPrettyLog(
   const levelLabel = LEVEL_LABELS[level];
 
   // Extract module from context
-  const module = baseContext.module || context.module || '';
+  const moduleName = baseContext.module || context.module || '';
 
   // Merge and filter context (exclude env, module which are shown separately)
   const mergedContext = { ...baseContext, ...context };
@@ -128,8 +128,8 @@ function formatPrettyLog(
   // Build the main line
   let output = `${COLORS.dim}[${time}]${COLORS.reset} ${levelColor}${levelLabel}${COLORS.reset}`;
 
-  if (module) {
-    output += ` ${COLORS.module}(${module})${COLORS.reset}`;
+  if (moduleName) {
+    output += ` ${COLORS.module}(${moduleName})${COLORS.reset}`;
   }
 
   output += `: ${message}`;
@@ -209,8 +209,8 @@ function createLogFunction(level: LogLevel, baseContext: LogContext = {}): (ctx:
 }
 
 function createLoggerInstance(baseContext: LogContext = {}): Logger {
-  const module = baseContext.module || '';
-  const moduleTag = module ? `[${module}]` : '';
+  const moduleName = baseContext.module || '';
+  const moduleTag = moduleName ? `[${moduleName}]` : '';
 
   return {
     trace: createLogFunction('trace', baseContext),

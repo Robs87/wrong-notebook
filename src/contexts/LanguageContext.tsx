@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useSyncExternalStore } from 'react';
 import { translations, Language } from '@/lib/translations';
 
 interface LanguageContextType {
@@ -10,20 +10,44 @@ interface LanguageContextType {
 }
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
+const DEFAULT_LANGUAGE: Language = 'zh';
+const LANGUAGE_STORAGE_KEY = 'app-language';
+
+function isLanguage(value: string | null): value is Language {
+    return value === 'zh' || value === 'en';
+}
+
+function getStoredLanguage(): Language {
+    if (typeof window === 'undefined') return DEFAULT_LANGUAGE;
+
+    const savedLang = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    return isLanguage(savedLang) ? savedLang : DEFAULT_LANGUAGE;
+}
+
+function subscribeToLanguageChange(onStoreChange: () => void) {
+    if (typeof window === 'undefined') return () => undefined;
+
+    const handleStorage = (event: StorageEvent) => {
+        if (event.key === LANGUAGE_STORAGE_KEY) {
+            onStoreChange();
+        }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('app-language-change', onStoreChange);
+
+    return () => {
+        window.removeEventListener('storage', handleStorage);
+        window.removeEventListener('app-language-change', onStoreChange);
+    };
+}
 
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
-    const [language, setLanguage] = useState<Language>('zh'); // Default to Chinese
-
-    useEffect(() => {
-        const savedLang = localStorage.getItem('app-language') as Language;
-        if (savedLang) {
-            setLanguage(savedLang);
-        }
-    }, []);
+    const language = useSyncExternalStore(subscribeToLanguageChange, getStoredLanguage, () => DEFAULT_LANGUAGE);
 
     const handleSetLanguage = (lang: Language) => {
-        setLanguage(lang);
-        localStorage.setItem('app-language', lang);
+        localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
+        window.dispatchEvent(new Event('app-language-change'));
     };
 
     const value = {

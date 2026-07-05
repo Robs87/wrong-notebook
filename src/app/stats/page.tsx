@@ -10,7 +10,7 @@ import { BarChart3, TrendingUp, Activity, House } from "lucide-react";
 import Link from "next/link";
 
 export default function StatsPage() {
-    const { t, language } = useLanguage();
+    const { t } = useLanguage();
 
     return (
         <div className="container mx-auto px-4 py-8 max-w-6xl">

@@ -5,17 +5,24 @@ import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, RefreshCw, CheckCircle, Eye, Send, XCircle, ArrowLeft, House } from "lucide-react";
+import { Loader2, RefreshCw, CheckCircle, Send, XCircle, ArrowLeft, House } from "lucide-react";
 import { ParsedQuestion } from "@/lib/ai/types";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { apiClient } from "@/lib/api-client";
+import { getErrorDataMessage } from "@/lib/error-utils";
 import { AppConfig } from "@/types/api";
 import { frontendLogger } from "@/lib/frontend-logger";
 
 export const dynamic = 'force-dynamic';
+
+type Difficulty = "easy" | "medium" | "hard" | "harder";
+
+function isDifficulty(value: string): value is Difficulty {
+    return value === "easy" || value === "medium" || value === "hard" || value === "harder";
+}
 
 function PracticeContent() {
     const searchParams = useSearchParams();
@@ -45,7 +52,7 @@ function PracticeContent() {
             .catch(err => console.error(err));
     }, []);
 
-    const [difficulty, setDifficulty] = useState<"easy" | "medium" | "hard" | "harder">("medium");
+    const [difficulty, setDifficulty] = useState<Difficulty>("medium");
 
     const [error, setError] = useState<string | null>(null);
 
@@ -70,9 +77,9 @@ function PracticeContent() {
                 difficulty
             }, { timeout });
             setQuestion(data);
-        } catch (error: any) {
+        } catch (error) {
             console.error(error);
-            const msg = error.data?.message || "";
+            const msg = getErrorDataMessage(error) || "";
 
             let errorMessage = t.practice.errors?.default || "Failed to generate";
 
@@ -160,15 +167,15 @@ function PracticeContent() {
                         <div className="flex items-center gap-2 bg-muted/50 p-2 rounded-lg">
                             <span className="text-sm font-medium text-muted-foreground">{t.practice.difficulty?.label || "Difficulty"}:</span>
                             <div className="flex gap-1">
-                                {[
+                                {([
                                     { value: "easy", label: t.practice.difficulty?.easy || "Easy", color: "bg-green-100 text-green-700 hover:bg-green-200" },
                                     { value: "medium", label: t.practice.difficulty?.medium || "Medium", color: "bg-blue-100 text-blue-700 hover:bg-blue-200" },
                                     { value: "hard", label: t.practice.difficulty?.hard || "Hard", color: "bg-orange-100 text-orange-700 hover:bg-orange-200" },
                                     { value: "harder", label: t.practice.difficulty?.harder || "Challenge", color: "bg-red-100 text-red-700 hover:bg-red-200" }
-                                ].map((level) => (
+                                ] satisfies Array<{ value: Difficulty; label: string; color: string }>).map((level) => (
                                     <button
                                         key={level.value}
-                                        onClick={() => setDifficulty(level.value as any)}
+                                        onClick={() => setDifficulty(level.value)}
                                         className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${difficulty === level.value
                                             ? level.color.replace("bg-", "bg-opacity-100 bg-").replace("text-", "ring-2 ring-offset-1 ring-")
                                             : "bg-transparent hover:bg-muted text-muted-foreground"
@@ -206,7 +213,11 @@ function PracticeContent() {
                                 <div className="flex items-center gap-2">
                                     <select
                                         value={difficulty}
-                                        onChange={(e) => setDifficulty(e.target.value as any)}
+                                        onChange={(e) => {
+                                            if (isDifficulty(e.target.value)) {
+                                                setDifficulty(e.target.value);
+                                            }
+                                        }}
                                         className="h-8 text-xs border rounded px-2 bg-background"
                                         disabled={loading}
                                     >

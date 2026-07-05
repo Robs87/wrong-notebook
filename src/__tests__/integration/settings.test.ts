@@ -29,7 +29,7 @@ const mocks = vi.hoisted(() => ({
             similar: '',
         },
     })),
-    mockUpdateAppConfig: vi.fn((config: any) => ({
+    mockUpdateAppConfig: vi.fn((config: { aiProvider?: string }) => ({
         ...config,
         aiProvider: config.aiProvider || 'gemini',
     })),
@@ -149,7 +149,6 @@ describe('/api/settings', () => {
             });
 
             const response = await POST(request);
-            const data = await response.json();
 
             expect(response.status).toBe(200);
             expect(mocks.mockUpdateAppConfig).toHaveBeenCalledWith(

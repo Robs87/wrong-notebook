@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
 import { useState, useEffect } from "react";
 import { ParsedQuestion } from "@/lib/ai";
@@ -186,7 +187,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
             } else {
                 setGeogebraError(result.description || "该题目不适合用 GeoGebra 演示");
             }
-        } catch (error: any) {
+        } catch (error) {
             console.error("GeoGebra analysis failed:", error);
             setGeogebraError("分析失败，请稍后重试");
         } finally {

@@ -8,13 +8,6 @@ import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('ai:tag-service');
 
-interface TagTreeNode {
-    id: string;
-    name: string;
-    parentId: string | null;
-    children?: TagTreeNode[];
-}
-
 /**
  * 从数据库获取指定年级的数学标签
  * @param grade - 年级 (7-9:初中, 10-12:高中) 或 null

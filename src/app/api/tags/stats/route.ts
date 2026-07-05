@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
  * GET /api/tags/stats
  * 获取标签使用频率统计
  */
-export async function GET(req: Request) {
+export async function GET() {
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.id) {
@@ -46,7 +46,7 @@ export async function GET(req: Request) {
                             }
                         });
                     }
-                } catch (e) {
+                } catch {
                     logger.warn({ knowledgePoints: item.knowledgePoints }, 'Failed to parse knowledgePoints for item');
                 }
             }

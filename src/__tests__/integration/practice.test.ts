@@ -514,7 +514,7 @@ describe('/api/practice', () => {
             vi.mocked(getServerSession).mockResolvedValue({
                 user: undefined,
                 expires: '2025-12-31',
-            } as any);
+            } as never);
 
             const request = new Request('http://localhost/api/practice/record', {
                 method: 'POST',

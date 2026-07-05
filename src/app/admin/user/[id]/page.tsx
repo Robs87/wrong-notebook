@@ -35,7 +35,7 @@ export default function AdminUserDetailPage() {
 
     useEffect(() => {
         if (status === "loading") return
-        if (!session?.user || (session.user as any).role !== "admin") {
+        if (!session?.user || session.user.role !== "admin") {
             router.push("/")
             return
         }

@@ -96,11 +96,11 @@ describe('/api/tags', () => {
 
             expect(response.status).toBe(200);
 
-            const equationStat = data.stats.find((s: any) => s.tag === '一元一次方程');
+            const equationStat = data.stats.find((s: { tag: string; count: number }) => s.tag === '一元一次方程');
             expect(equationStat).toBeDefined();
             expect(equationStat.count).toBe(3);
 
-            const functionStat = data.stats.find((s: any) => s.tag === '函数');
+            const functionStat = data.stats.find((s: { tag: string; count: number }) => s.tag === '函数');
             expect(functionStat).toBeDefined();
             expect(functionStat.count).toBe(1);
         });
@@ -196,6 +196,7 @@ describe('/api/tags', () => {
         const createMockTag = (name: string, subject = 'math', isSystem = true, hasChildren = false) => ({
             id: `tag-${name}`,
             name,
+            subject,
             parentId: null,
             userId: null,
             isSystem,

@@ -145,7 +145,7 @@ describe('GET /api/ai/models - Gemini provider', () => {
         const body = await res.json();
 
         expect(body.models).toHaveLength(4);
-        expect(body.models.map((m: any) => m.id)).toEqual([
+        expect(body.models.map((m: { id: string }) => m.id)).toEqual([
             'gemini-2.0-flash',
             'text-embedding-004',
             'gemini-1.5-pro',

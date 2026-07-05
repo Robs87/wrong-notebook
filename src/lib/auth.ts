@@ -7,12 +7,15 @@ import { createLogger } from "@/lib/logger"
 
 const logger = createLogger('auth');
 
-export const authOptions: NextAuthOptions = {
+type NextAuthOptionsWithTrustHost = NextAuthOptions & {
+    trustHost?: boolean;
+};
+
+export const authOptions: NextAuthOptionsWithTrustHost = {
     adapter: PrismaAdapter(prisma),
     session: {
         strategy: "jwt",
     },
-    // @ts-expect-error trustHost is a valid option in newer NextAuth versions but types might be lagging
     trustHost: true,
     pages: {
         signIn: "/login",
@@ -106,13 +109,13 @@ export const authOptions: NextAuthOptions = {
                 }
             }
         },
-        async jwt({ token, user, account, profile }) {
+        async jwt({ token, user }) {
             if (user) {
                 logger.debug({ userId: user.id }, 'JWT callback - Initial signin');
                 return {
                     ...token,
                     id: user.id,
-                    role: (user as any).role,
+                    role: user.role,
                 }
             }
             logger.debug('JWT callback - Subsequent call');

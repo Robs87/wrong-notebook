@@ -16,6 +16,8 @@ import { ArrowLeft, Upload, PenLine } from "lucide-react";
 import { ProgressFeedback, ProgressStatus } from "@/components/ui/progress-feedback";
 import { frontendLogger } from "@/lib/frontend-logger";
 import { TextInputZone } from "@/components/text-input-zone";
+import { getErrorDataMessage, getErrorDataString, getErrorMessage, getErrorStatus } from "@/lib/error-utils";
+import { normalizeMistakeStatus } from "@/lib/mistake-status";
 
 export default function AddErrorPage() {
     const params = useParams();
@@ -175,11 +177,11 @@ export default function AddErrorPage() {
             frontendLogger.info('[AddAnalyze]', 'Analysis completed successfully', {
                 totalDuration
             });
-        } catch (error: any) {
+        } catch (error) {
             const errorDuration = Date.now() - startTime;
             frontendLogger.error('[AddError]', 'Analysis failed', {
                 errorDuration,
-                error: error.message || String(error)
+                error: getErrorMessage(error, String(error))
             });
 
             // 安全的错误处理逻辑，防止在报错时二次报错
@@ -188,13 +190,13 @@ export default function AddErrorPage() {
                 let errorMessage = t.common.messages?.analysisFailed || 'Analysis failed';
 
                 // ApiError 的结构：error.data.message 包含后端返回的错误类型
-                const backendErrorType = error?.data?.message;
+                const backendErrorType = getErrorDataMessage(error);
 
                 if (backendErrorType && typeof backendErrorType === 'string') {
                     // 检查是否是已知的 AI 错误类型
                     // 使用安全访问
                     if (t.errors && typeof t.errors === 'object' && backendErrorType in t.errors) {
-                        const mappedError = (t.errors as any)[backendErrorType];
+                        const mappedError = t.errors[backendErrorType as keyof typeof t.errors];
                         if (typeof mappedError === 'string') {
                             errorMessage = mappedError;
                             frontendLogger.info('[AddError]', `Matched error type: ${backendErrorType}`, {
@@ -208,16 +210,18 @@ export default function AddErrorPage() {
                             errorMessage
                         });
                     }
-                } else if (error?.message) {
+                } else {
                     // Fallback：检查 error.message（用于非 API 错误）
-                    if (error.message.includes('fetch') || error.message.includes('network')) {
+                    const fallbackMessage = getErrorMessage(error);
+                    const rawErrorData = getErrorDataString(error);
+                    if (fallbackMessage.includes('fetch') || fallbackMessage.includes('network')) {
                         errorMessage = t.errors?.AI_CONNECTION_FAILED || '网络连接失败';
-                    } else if (typeof error.data === 'string') {
+                    } else if (rawErrorData) {
                         // 如果 data 是字符串（例如 HTML 错误页），可能包含提示
                         frontendLogger.info('[AddError]', 'Raw error data', {
-                            errorDataPreview: error.data.substring(0, 100)
+                            errorDataPreview: rawErrorData.substring(0, 100)
                         });
-                        errorMessage += ` (${error.status || 'Error'})`;
+                        errorMessage += ` (${getErrorStatus(error) || 'Error'})`;
                     }
                 }
 
@@ -267,7 +271,7 @@ export default function AddErrorPage() {
                 knowledgePoints: result.knowledgePoints || [],
                 wrongAnswerText: result.wrongAnswerText || "",
                 mistakeAnalysis: result.mistakeAnalysis || "",
-                mistakeStatus: (result.mistakeStatus as any) || "unknown",
+                mistakeStatus: normalizeMistakeStatus(result.mistakeStatus),
                 subject: "数学",
                 requiresImage: false,
             };
@@ -278,19 +282,19 @@ export default function AddErrorPage() {
 
             const totalDuration = Date.now() - startTime;
             frontendLogger.info('[AddTextSubmit]', 'Text analysis completed', { totalDuration });
-        } catch (error: any) {
+        } catch (error) {
             const errorDuration = Date.now() - startTime;
             frontendLogger.error('[AddTextSubmit]', 'Analysis failed', {
                 errorDuration,
-                error: error.message || String(error)
+                error: getErrorMessage(error, String(error))
             });
 
             try {
                 let errorMessage = t.common.messages?.analysisFailed || 'Analysis failed';
-                const backendErrorType = error?.data?.message;
+                const backendErrorType = getErrorDataMessage(error);
                 if (backendErrorType && typeof backendErrorType === 'string') {
                     if (t.errors && typeof t.errors === 'object' && backendErrorType in t.errors) {
-                        const mappedError = (t.errors as any)[backendErrorType];
+                        const mappedError = t.errors[backendErrorType as keyof typeof t.errors];
                         if (typeof mappedError === 'string') errorMessage = mappedError;
                     } else {
                         errorMessage = backendErrorType;

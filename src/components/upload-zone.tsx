@@ -18,6 +18,8 @@ declare global {
     }
 }
 
+type CaptureControllerInstance = InstanceType<Window['CaptureController']>;
+
 interface UploadZoneProps {
     onImageSelect: (file: File) => void;  // 改为传递 File 对象
     isAnalyzing: boolean;
@@ -74,7 +76,7 @@ export function UploadZone({ onImageSelect, isAnalyzing }: UploadZoneProps) {
 
         try {
             // 创建 CaptureController 来控制焦点行为
-            let controller;
+            let controller: CaptureControllerInstance | undefined;
             if ('CaptureController' in window) {
                 controller = new window.CaptureController();
             }
@@ -82,7 +84,7 @@ export function UploadZone({ onImageSelect, isAnalyzing }: UploadZoneProps) {
             // 请求屏幕共享权限，优先当前标签页
             const displayMediaOptions: DisplayMediaStreamOptions & {
                 preferCurrentTab?: boolean;
-                controller?: any;
+                controller?: CaptureControllerInstance;
             } = {
                 video: true,
                 audio: false,
@@ -90,15 +92,17 @@ export function UploadZone({ onImageSelect, isAnalyzing }: UploadZoneProps) {
             };
 
             if (controller) {
-                (displayMediaOptions as any).controller = controller;
+                displayMediaOptions.controller = controller;
             }
 
             const stream = await navigator.mediaDevices.getDisplayMedia(displayMediaOptions);
 
             // 获取视频轨道并检查捕获类型
             const [videoTrack] = stream.getVideoTracks();
-            const settings = videoTrack.getSettings();
-            const displaySurface = (settings as any).displaySurface;  // 'browser' 表示标签页
+            const settings = videoTrack.getSettings() as MediaTrackSettings & {
+                displaySurface?: string;
+            };
+            const displaySurface = settings.displaySurface;  // 'browser' 表示标签页
 
             // 如果是标签页或窗口，设置不切换焦点
             if (controller && (displaySurface === 'browser' || displaySurface === 'window')) {

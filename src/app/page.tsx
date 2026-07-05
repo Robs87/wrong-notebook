@@ -22,6 +22,8 @@ import { ProgressFeedback, ProgressStatus } from "@/components/ui/progress-feedb
 import { frontendLogger } from "@/lib/frontend-logger";
 import { TextInputZone } from "@/components/text-input-zone";
 import { DirectTextEditor } from "@/components/direct-text-editor";
+import { getErrorData, getErrorDataMessage, getErrorDataString, getErrorMessage, getErrorStatus } from "@/lib/error-utils";
+import { normalizeMistakeStatus } from "@/lib/mistake-status";
 
 function HomeContent() {
     const [step, setStep] = useState<"upload" | "review">("upload");
@@ -194,11 +196,11 @@ function HomeContent() {
             frontendLogger.info('[HomeAnalyze]', 'Analysis completed successfully', {
                 totalDuration
             });
-        } catch (error: any) {
+        } catch (error) {
             const errorDuration = Date.now() - startTime;
             frontendLogger.error('[HomeError]', 'Analysis failed', {
                 errorDuration,
-                error: error.message || String(error)
+                error: getErrorMessage(error, String(error))
             });
 
             // 安全的错误处理逻辑，防止在报错时二次报错
@@ -206,12 +208,12 @@ function HomeContent() {
                 let errorMessage = t.common?.messages?.analysisFailed || 'Analysis failed, please try again';
 
                 // ApiError 的结构：error.data.message 包含后端返回的错误类型
-                const backendErrorType = error?.data?.message;
+                const backendErrorType = getErrorDataMessage(error);
 
                 if (backendErrorType && typeof backendErrorType === 'string') {
                     // 检查是否是已知的 AI 错误类型
                     if (t.errors && typeof t.errors === 'object' && backendErrorType in t.errors) {
-                        const mappedError = (t.errors as any)[backendErrorType];
+                        const mappedError = t.errors[backendErrorType as keyof typeof t.errors];
                         if (typeof mappedError === 'string') {
                             errorMessage = mappedError;
                             frontendLogger.info('[HomeError]', `Matched error type: ${backendErrorType}`, {
@@ -225,15 +227,17 @@ function HomeContent() {
                             errorMessage
                         });
                     }
-                } else if (error?.message) {
+                } else {
                     // Fallback：检查 error.message（用于非 API 错误）
-                    if (error.message.includes('fetch') || error.message.includes('network')) {
+                    const fallbackMessage = getErrorMessage(error);
+                    const rawErrorData = getErrorDataString(error);
+                    if (fallbackMessage.includes('fetch') || fallbackMessage.includes('network')) {
                         errorMessage = t.errors?.AI_CONNECTION_FAILED || '网络连接失败';
-                    } else if (typeof error.data === 'string') {
+                    } else if (rawErrorData) {
                         frontendLogger.info('[HomeError]', 'Raw error data', {
-                            errorDataPreview: error.data.substring(0, 100)
+                            errorDataPreview: rawErrorData.substring(0, 100)
                         });
-                        errorMessage += ` (${error.status || 'Error'})`;
+                        errorMessage += ` (${getErrorStatus(error) || 'Error'})`;
                     }
                 }
 
@@ -283,11 +287,11 @@ function HomeContent() {
             if (finalData.subjectId) {
                 router.push(`/notebooks/${finalData.subjectId}`);
             }
-        } catch (error: any) {
+        } catch (error) {
             frontendLogger.error('[HomeSave]', 'Save failed', {
-                errorStatus: error?.status,
-                errorMessage: error?.data?.message || error?.message || String(error),
-                errorData: error?.data,
+                errorStatus: getErrorStatus(error),
+                errorMessage: getErrorDataMessage(error) || getErrorMessage(error, String(error)),
+                errorData: getErrorData(error),
             });
             alert(t.common?.messages?.saveFailed || 'Failed to save');
         }
@@ -329,7 +333,7 @@ function HomeContent() {
                 knowledgePoints: result.knowledgePoints || [],
                 wrongAnswerText: result.wrongAnswerText || "",
                 mistakeAnalysis: result.mistakeAnalysis || "",
-                mistakeStatus: (result.mistakeStatus as any) || "unknown",
+                mistakeStatus: normalizeMistakeStatus(result.mistakeStatus),
                 subject: "数学", // Default, will be overridden by notebook selection
                 requiresImage: false,
             };
@@ -340,19 +344,19 @@ function HomeContent() {
 
             const totalDuration = Date.now() - startTime;
             frontendLogger.info('[HomeTextSubmit]', 'Text analysis completed', { totalDuration });
-        } catch (error: any) {
+        } catch (error) {
             const errorDuration = Date.now() - startTime;
             frontendLogger.error('[HomeTextSubmit]', 'Analysis failed', {
                 errorDuration,
-                error: error.message || String(error)
+                error: getErrorMessage(error, String(error))
             });
 
             try {
                 let errorMessage = t.common?.messages?.analysisFailed || 'Analysis failed, please try again';
-                const backendErrorType = error?.data?.message;
+                const backendErrorType = getErrorDataMessage(error);
                 if (backendErrorType && typeof backendErrorType === 'string') {
                     if (t.errors && typeof t.errors === 'object' && backendErrorType in t.errors) {
-                        const mappedError = (t.errors as any)[backendErrorType];
+                        const mappedError = t.errors[backendErrorType as keyof typeof t.errors];
                         if (typeof mappedError === 'string') errorMessage = mappedError;
                     } else {
                         errorMessage = backendErrorType;
@@ -412,10 +416,10 @@ function HomeContent() {
             if (data.subjectId) {
                 router.push(`/notebooks/${data.subjectId}`);
             }
-        } catch (error: any) {
+        } catch (error) {
             frontendLogger.error('[HomeDirectSave]', 'Save failed', {
-                errorStatus: error?.status,
-                errorMessage: error?.data?.message || error?.message || String(error),
+                errorStatus: getErrorStatus(error),
+                errorMessage: getErrorDataMessage(error) || getErrorMessage(error, String(error)),
             });
             setAnalysisStep('idle');
             alert(t.common?.messages?.saveFailed || 'Failed to save');

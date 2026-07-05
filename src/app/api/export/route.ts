@@ -26,7 +26,7 @@ export async function GET(req: Request) {
     const exportAll = searchParams.get('all') === 'true';
 
     // 只有管理员可以导出全部数据
-    if (exportAll && (session.user as any).role !== 'admin') {
+    if (exportAll && session.user.role !== 'admin') {
         return forbidden("Admin role required");
     }
 

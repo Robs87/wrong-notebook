@@ -41,8 +41,12 @@ export function setupGlobalProxy() {
             if (targetHttpsProxy) process.env.GLOBAL_AGENT_HTTPS_PROXY = targetHttpsProxy;
 
             // Also set the global config object which global-agent uses
-            // @ts-ignore
-            global.GLOBAL_AGENT = {
+            (globalThis as typeof globalThis & {
+                GLOBAL_AGENT?: {
+                    HTTP_PROXY?: string;
+                    HTTPS_PROXY?: string;
+                };
+            }).GLOBAL_AGENT = {
                 HTTP_PROXY: targetHttpProxy,
                 HTTPS_PROXY: targetHttpsProxy,
             };

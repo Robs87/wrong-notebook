@@ -12,6 +12,7 @@ import { RenameNotebookDialog } from "@/components/rename-notebook-dialog";
 
 import { Notebook } from "@/types/api";
 import { apiClient } from "@/lib/api-client";
+import { getErrorDataMessage } from "@/lib/error-utils";
 
 import { useLanguage } from "@/contexts/LanguageContext";
 
@@ -44,9 +45,9 @@ export default function NotebooksPage() {
         try {
             await apiClient.post("/api/notebooks", { name });
             await fetchNotebooks();
-        } catch (error: any) {
+        } catch (error) {
             console.error(error);
-            const message = error.data?.message || t.notebooks?.createError || "Failed to create";
+            const message = getErrorDataMessage(error) || t.notebooks?.createError || "Failed to create";
             alert(message);
         }
     };
@@ -68,9 +69,9 @@ export default function NotebooksPage() {
         try {
             await apiClient.delete(`/api/notebooks/${id}`);
             await fetchNotebooks();
-        } catch (error: any) {
+        } catch (error) {
             console.error(error);
-            const message = error.data?.message || t.notebooks?.deleteError || "Failed to delete";
+            const message = getErrorDataMessage(error) || t.notebooks?.deleteError || "Failed to delete";
             alert(message);
         }
     };

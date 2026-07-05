@@ -48,7 +48,11 @@ export function NotebookSelector({ value, onChange, className }: NotebookSelecto
                 </div>
             </SelectTrigger>
             <SelectContent>
-                {notebooks.length === 0 ? (
+                {loading ? (
+                    <div className="p-2 text-sm text-muted-foreground text-center">
+                        {t.common?.loading || "Loading..."}
+                    </div>
+                ) : notebooks.length === 0 ? (
                     <div className="p-2 text-sm text-muted-foreground text-center">
                         {t.notebooks?.selector?.empty || "No notebooks available"}
                     </div>

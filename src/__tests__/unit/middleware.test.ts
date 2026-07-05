@@ -80,7 +80,7 @@ describe('middleware', () => {
         };
 
         it('应该允许已认证用户访问受保护页面', async () => {
-            vi.mocked(getToken).mockResolvedValue(mockToken as any);
+            vi.mocked(getToken).mockResolvedValue(mockToken as never);
 
             const req = new NextRequest('http://localhost:3000/notebooks');
             const response = await middleware(req);
@@ -90,7 +90,7 @@ describe('middleware', () => {
         });
 
         it('应该重定向已认证用户离开登录页', async () => {
-            vi.mocked(getToken).mockResolvedValue(mockToken as any);
+            vi.mocked(getToken).mockResolvedValue(mockToken as never);
 
             const req = new NextRequest('http://localhost:3000/login');
             const response = await middleware(req);
@@ -101,7 +101,7 @@ describe('middleware', () => {
         });
 
         it('应该重定向已认证用户离开注册页', async () => {
-            vi.mocked(getToken).mockResolvedValue(mockToken as any);
+            vi.mocked(getToken).mockResolvedValue(mockToken as never);
 
             const req = new NextRequest('http://localhost:3000/register');
             const response = await middleware(req);
@@ -112,7 +112,7 @@ describe('middleware', () => {
         });
 
         it('应该允许已认证用户访问首页', async () => {
-            vi.mocked(getToken).mockResolvedValue(mockToken as any);
+            vi.mocked(getToken).mockResolvedValue(mockToken as never);
 
             const req = new NextRequest('http://localhost:3000/');
             const response = await middleware(req);

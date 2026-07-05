@@ -15,13 +15,33 @@ interface GeogebraDemoProps {
     onRegenerate?: () => Promise<void>;
 }
 
+interface GeoGebraApi {
+    evalCommand(command: string): void;
+    remove?: () => void;
+    resetConstruction?: () => void;
+    setSize?: (width: number, height: number) => void;
+    [method: string]: unknown;
+}
+
+interface GeoGebraAppletInstance {
+    inject(id: string): void;
+}
+
+interface GeoGebraAppletConstructor {
+    new (parameters: Record<string, unknown>, html5NoWebSimple?: boolean): GeoGebraAppletInstance;
+}
+
+type GeoGebraWindow = Window & {
+    GGBApplet?: GeoGebraAppletConstructor;
+};
+
 // ── Singleton script loader ─────────────────────────────────────────────
 let ggbScriptPromise: Promise<void> | null = null;
 
 function loadGeoGebraScript(): Promise<void> {
     if (ggbScriptPromise) return ggbScriptPromise;
     ggbScriptPromise = new Promise<void>((resolve, reject) => {
-        if (typeof window !== "undefined" && (window as any).GGBApplet) {
+        if (typeof window !== "undefined" && (window as GeoGebraWindow).GGBApplet) {
             resolve();
             return;
         }
@@ -99,12 +119,14 @@ function parseApiArgs(cmd: string): { m: string; a: unknown[] } | null {
     catch { return null; }
 }
 
-function runCommands(api: any, cmds: string[]) {
+function runCommands(api: GeoGebraApi, cmds: string[]) {
     for (const cmd of cmds) {
         try {
             if (isApiCall(cmd)) {
                 const p = parseApiArgs(cmd);
-                if (p && typeof api[p.m] === 'function') api[p.m](...p.a);
+                if (!p) continue;
+                const method = api[p.m];
+                if (typeof method === 'function') method(...p.a);
             } else {
                 // Basic command validation: only allow safe characters
                 const sanitized = cmd.trim();
@@ -134,7 +156,7 @@ export function GeogebraDemo({
     // All GeoGebra DOM is injected via innerHTML in the effect, so
     // React's reconciler never touches the inside of this node.
     const ggbHostRef = useRef<HTMLDivElement>(null);
-    const apiRef = useRef<any>(null);
+    const apiRef = useRef<GeoGebraApi | null>(null);
     const idRef = useRef(`ggb-${Math.random().toString(36).slice(2, 9)}`);
 
     const [loading, setLoading] = useState(true);
@@ -150,17 +172,17 @@ export function GeogebraDemo({
 
         let dead = false;
         const id = idRef.current;
+        const host = ggbHostRef.current;
 
         loadGeoGebraScript().then(() => {
             if (dead) return;
-            const GGBApplet = (window as any).GGBApplet;
+            const GGBApplet = (window as GeoGebraWindow).GGBApplet;
             if (!GGBApplet) { setError("GeoGebra 未正确加载"); setLoading(false); return; }
 
-            const el = ggbHostRef.current;
-            if (!el) return;
+            if (!host) return;
 
             // Write the inject target directly — React never reconciles this.
-            el.innerHTML = `<div id="${id}" style="width:100%;height:${height}px"></div>`;
+            host.innerHTML = `<div id="${id}" style="width:100%;height:${height}px"></div>`;
 
             try {
                 const applet = new GGBApplet({
@@ -174,7 +196,7 @@ export function GeogebraDemo({
                     enableRightClick: true,
                     enableShiftDragZoom: true,
                     language: "zh",
-                    appletOnLoad: (api: any) => {
+                    appletOnLoad: (api: GeoGebraApi) => {
                         if (dead) return;
                         apiRef.current = api;
                         runCommands(api, cmds);
@@ -205,12 +227,11 @@ export function GeogebraDemo({
             }
             apiRef.current = null;
             // Clear injected DOM
-            if (ggbHostRef.current) {
-                ggbHostRef.current.innerHTML = '';
+            if (host) {
+                host.innerHTML = '';
             }
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [cmds, showToolBar, showAlgebraInput, showMenuBar]);
+    }, [cmds, height, showToolBar, showAlgebraInput, showMenuBar]);
 
     // ── Resize when expanded toggles ────────────────────────────────────
     useEffect(() => {
@@ -227,7 +248,7 @@ export function GeogebraDemo({
         const api = apiRef.current;
         if (!api) return;
         try {
-            api.resetConstruction();
+            api.resetConstruction?.();
             setTimeout(() => { if (apiRef.current) runCommands(apiRef.current, cmds); }, 300);
         } catch (e) { console.warn("[GGB] Reset failed", e); }
     }, [cmds]);

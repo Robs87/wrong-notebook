@@ -5,8 +5,9 @@ import { getServerSession } from "next-auth";
 import { calculateGradeNumber, inferSubjectFromName } from "@/lib/knowledge-tags";
 import { calculateGrade } from "@/lib/grade-calculator";
 import { prisma } from "@/lib/prisma";
-import { badRequest, forbidden, internalError, createErrorResponse, ErrorCode } from "@/lib/api-errors";
+import { badRequest, forbidden, createErrorResponse, ErrorCode } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { getErrorMessage, getErrorStack } from "@/lib/error-utils";
 
 const logger = createLogger('api:analyze');
 
@@ -23,7 +24,8 @@ export async function POST(req: Request) {
 
     try {
         const body = await req.json();
-        let { imageBase64, mimeType, language, subjectId } = body;
+        let { imageBase64, mimeType } = body;
+        const { language, subjectId } = body;
 
         logger.debug({
             imageLength: imageBase64?.length,
@@ -127,38 +129,39 @@ export async function POST(req: Request) {
         logger.info('AI analysis successful');
 
         return NextResponse.json(analysisResult);
-    } catch (error: any) {
+    } catch (error) {
+        const errorMessageText = getErrorMessage(error);
         logger.error({
-            error: error.message,
-            stack: error.stack
+            error: errorMessageText,
+            stack: getErrorStack(error)
         }, 'Analysis error occurred');
 
         // 返回具体的错误类型，便于前端显示详细提示
-        let errorMessage = error.message || "Failed to analyze image";
+        let errorMessage = errorMessageText || "Failed to analyze image";
 
         // 识别特定错误类型
-        if (error.message && (
-            error.message === 'AI_CONNECTION_FAILED' ||
-            error.message === 'AI_RESPONSE_ERROR' ||
-            error.message.includes('AI_AUTH_ERROR') ||
-            error.message === 'AI_TIMEOUT_ERROR' ||
-            error.message === 'AI_QUOTA_EXCEEDED' ||
-            error.message === 'AI_PERMISSION_DENIED' ||
-            error.message === 'AI_NOT_FOUND' ||
-            error.message === 'AI_SERVICE_UNAVAILABLE' ||
-            error.message === 'AI_UNKNOWN_ERROR'
+        if (errorMessageText && (
+            errorMessageText === 'AI_CONNECTION_FAILED' ||
+            errorMessageText === 'AI_RESPONSE_ERROR' ||
+            errorMessageText.includes('AI_AUTH_ERROR') ||
+            errorMessageText === 'AI_TIMEOUT_ERROR' ||
+            errorMessageText === 'AI_QUOTA_EXCEEDED' ||
+            errorMessageText === 'AI_PERMISSION_DENIED' ||
+            errorMessageText === 'AI_NOT_FOUND' ||
+            errorMessageText === 'AI_SERVICE_UNAVAILABLE' ||
+            errorMessageText === 'AI_UNKNOWN_ERROR'
         )) {
             // 直接传递 AI Provider 定义的错误类型 (如果是 AI_AUTH_ERROR，提取出来)
-            if (error.message.includes('AI_AUTH_ERROR')) {
+            if (errorMessageText.includes('AI_AUTH_ERROR')) {
                 errorMessage = 'AI_AUTH_ERROR';
             } else {
-                errorMessage = error.message;
+                errorMessage = errorMessageText;
             }
-        } else if (error.message?.includes('Zod') || error.message?.includes('validate')) {
+        } else if (errorMessageText.includes('Zod') || errorMessageText.includes('validate')) {
             // Zod 验证错误
             errorMessage = 'AI_RESPONSE_ERROR';
         }
 
-        return createErrorResponse(errorMessage, 500, ErrorCode.AI_ERROR, error.message);
+        return createErrorResponse(errorMessage, 500, ErrorCode.AI_ERROR, errorMessageText);
     }
 }

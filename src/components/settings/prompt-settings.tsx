@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -29,52 +28,40 @@ function VariableInfo({ name, description }: VariableInfoProps) {
     );
 }
 
-export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
-    const { language, t } = useLanguage();
-    const [analyzeTemplate, setAnalyzeTemplate] = useState("");
-    const [similarTemplate, setSimilarTemplate] = useState("");
+interface WarningBoxProps {
+    title: string;
+    message: string;
+}
 
-    useEffect(() => {
-        setAnalyzeTemplate(config.prompts?.analyze || DEFAULT_ANALYZE_TEMPLATE);
-        setSimilarTemplate(config.prompts?.similar || DEFAULT_SIMILAR_TEMPLATE);
-    }, [config.prompts]);
+function WarningBox({ title, message }: WarningBoxProps) {
+    return (
+        <div className="bg-amber-50 border border-amber-200 rounded-md p-3 flex items-start gap-3 text-amber-900 text-sm mb-4">
+            <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
+            <div className="space-y-1">
+                <p className="font-medium">{title}</p>
+                <p className="text-amber-800/90 text-xs">{message}</p>
+            </div>
+        </div>
+    );
+}
+
+export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
+    const { t } = useLanguage();
+    const analyzeTemplate = config.prompts?.analyze || DEFAULT_ANALYZE_TEMPLATE;
+    const similarTemplate = config.prompts?.similar || DEFAULT_SIMILAR_TEMPLATE;
+    const warningTitle = t.settings?.prompts?.caution || "Modify with Caution";
+    const warningMessage = t.settings?.prompts?.warning || "Variables in {{brackets}} are used to inject dynamic content. Please preserve these variables, otherwise the AI providing may fail to get question context or return invalid formats.";
 
     const handleReset = (type: 'analyze' | 'similar') => {
         if (!confirm(t.settings?.prompts?.resetConfirm || "Are you sure you want to reset to default?")) return;
 
         const defaultValue = type === 'analyze' ? DEFAULT_ANALYZE_TEMPLATE : DEFAULT_SIMILAR_TEMPLATE;
-        if (type === 'analyze') {
-            setAnalyzeTemplate(defaultValue);
-            onUpdate('analyze', defaultValue);
-        } else {
-            setSimilarTemplate(defaultValue);
-            onUpdate('similar', defaultValue);
-        }
+        onUpdate(type, defaultValue);
     };
 
     const handleChange = (type: 'analyze' | 'similar', value: string) => {
-        if (type === 'analyze') {
-            setAnalyzeTemplate(value);
-            onUpdate('analyze', value);
-        } else {
-            setSimilarTemplate(value);
-            onUpdate('similar', value);
-        }
+        onUpdate(type, value);
     };
-
-    const WarningBox = () => (
-        <div className="bg-amber-50 border border-amber-200 rounded-md p-3 flex items-start gap-3 text-amber-900 text-sm mb-4">
-            <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
-            <div className="space-y-1">
-                <p className="font-medium">
-                    {t.settings?.prompts?.caution || "Modify with Caution"}
-                </p>
-                <p className="text-amber-800/90 text-xs">
-                    {t.settings?.prompts?.warning || "Variables in {{brackets}} are used to inject dynamic content. Please preserve these variables, otherwise the AI providing may fail to get question context or return invalid formats."}
-                </p>
-            </div>
-        </div>
-    );
 
     return (
         <div className="space-y-4 border rounded-lg p-4 bg-muted/30">
@@ -100,7 +87,7 @@ export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
                             </Button>
                         </div>
 
-                        <WarningBox />
+                        <WarningBox title={warningTitle} message={warningMessage} />
 
                         <div className="space-y-2 border rounded-md p-3 bg-background">
                             <h4 className="text-xs font-medium flex items-center gap-1.5 mb-2">
@@ -144,7 +131,7 @@ export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
                             </Button>
                         </div>
 
-                        <WarningBox />
+                        <WarningBox title={warningTitle} message={warningMessage} />
 
                         <div className="space-y-2 border rounded-md p-3 bg-background">
                             <h4 className="text-xs font-medium flex items-center gap-1.5 mb-2">

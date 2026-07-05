@@ -11,12 +11,22 @@ import { AnalyticsData } from "@/types/api";
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
 
+interface TooltipPayloadItem {
+    value?: unknown;
+}
+
+interface CustomTooltipProps {
+    active?: boolean;
+    payload?: TooltipPayloadItem[];
+    label?: string;
+}
+
 export function WrongAnswerStats() {
     const [data, setData] = useState<AnalyticsData | null>(null);
     const [loading, setLoading] = useState(true);
-    const { t, language } = useLanguage();
+    const { t } = useLanguage();
 
-    const CustomTooltip = ({ active, payload, label }: any) => {
+    const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
         if (active && payload && payload.length) {
             return (
                 <div className="bg-background border rounded-lg shadow-lg p-3 text-sm">
@@ -24,7 +34,9 @@ export function WrongAnswerStats() {
                     <div className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full bg-violet-500" />
                         <span className="text-muted-foreground">{t.wrongAnswerStats.activity}:</span>
-                        <span className="font-bold">{payload[0].value}</span>
+                        <span className="font-bold">
+                            {typeof payload[0].value === 'number' || typeof payload[0].value === 'string' ? payload[0].value : ''}
+                        </span>
                     </div>
                 </div>
             );

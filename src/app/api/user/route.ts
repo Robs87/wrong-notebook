@@ -6,6 +6,7 @@ import { z } from "zod";
 import { hash } from "bcryptjs";
 import { unauthorized, notFound, badRequest, validationError, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { Prisma } from "@prisma/client";
 
 const logger = createLogger('api:user');
 
@@ -60,7 +61,7 @@ export async function PATCH(req: Request) {
         const body = await req.json();
         const { name, email, password, educationStage, enrollmentYear } = userUpdateSchema.parse(body);
 
-        const updateData: any = {};
+        const updateData: Prisma.UserUpdateInput = {};
 
         // 只有非空字符串才会触发更新
         if (name && name.trim()) updateData.name = name.trim();

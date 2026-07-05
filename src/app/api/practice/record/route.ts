@@ -17,7 +17,6 @@ export async function POST(req: Request) {
     try {
         const { subject, difficulty, isCorrect } = await req.json();
 
-        // @ts-ignore
         const userId = session.user.id;
 
         const record = await prisma.practiceRecord.create({

@@ -2,20 +2,19 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
-import { startOfMonth, subMonths, format, startOfWeek, subDays } from "date-fns";
+import { format, subDays } from "date-fns";
 import { unauthorized, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('api:analytics');
 
-export async function GET(req: Request) {
+export async function GET() {
     const session = await getServerSession(authOptions);
 
     if (!session || !session.user) {
         return unauthorized();
     }
 
-    // @ts-ignore
     const userId = session.user.id;
 
     try {

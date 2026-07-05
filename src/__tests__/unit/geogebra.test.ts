@@ -79,7 +79,7 @@ describe('GeoGebra Commands', () => {
         it('should return empty array for empty input', () => {
             expect(parseCommands('')).toEqual([]);
             expect(parseCommands('   ')).toEqual([]);
-            expect(parseCommands(null as any)).toEqual([]);
+            expect(parseCommands(null as never)).toEqual([]);
         });
 
         it('should filter non-string items from JSON array', () => {

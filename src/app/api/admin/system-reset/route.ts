@@ -8,7 +8,7 @@ import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('api:admin:system-reset');
 
-export async function POST(req: Request) {
+export async function POST() {
     const session = await getServerSession(authOptions);
 
     if (!session || !session.user) {
@@ -16,7 +16,7 @@ export async function POST(req: Request) {
     }
 
     // Strictly enforce Admin role
-    if ((session.user as any).role !== 'admin') {
+    if (session.user.role !== 'admin') {
         return forbidden("Admin access required for system reset");
     }
     // but typically this should be restricted.

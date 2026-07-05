@@ -49,13 +49,15 @@ export async function POST(req: Request) {
             }
         })
 
-        const { password: newUserPassword, ...rest } = newUser
+        const rest = Object.fromEntries(
+            Object.entries(newUser).filter(([key]) => key !== 'password')
+        )
 
         return NextResponse.json(
             { user: rest, message: "User created successfully" },
             { status: 201 }
         )
-    } catch (error) {
+    } catch {
         return NextResponse.json(
             { user: null, message: "Something went wrong" },
             { status: 500 }

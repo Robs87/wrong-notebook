@@ -109,7 +109,6 @@ export async function PUT(
         }
         if (mistakeStatus !== undefined || wrongAnswerText !== undefined || mistakeAnalysis !== undefined) {
             const nextWrongAnswerText = wrongAnswerText !== undefined ? wrongAnswerText : errorItem.wrongAnswerText;
-            const nextMistakeAnalysis = mistakeAnalysis !== undefined ? mistakeAnalysis : errorItem.mistakeAnalysis;
             updateData.mistakeStatus = normalizeMistakeStatusForSave(
                 mistakeStatus,
                 nextWrongAnswerText

@@ -9,14 +9,10 @@ interface FrontendLogEntry {
   level: 'info' | 'warn' | 'error';
   prefix: string;
   message: string;
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
   timestamp: string;
   url?: string;
   userAgent?: string;
-}
-
-interface BatchLogRequest {
-  logs: FrontendLogEntry[];
 }
 
 /**

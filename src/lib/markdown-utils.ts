@@ -1,5 +1,6 @@
 import { remark } from 'remark';
 import stripMarkdown from 'strip-markdown';
+import type { Plugin } from 'unified';
 
 /**
  * Clean markdown content to plain text.
@@ -15,7 +16,7 @@ export function cleanMarkdown(content: string): string {
         let text = content.replace(/\\_/g, '_');
 
         // 2. Use remark to strip markdown formatting
-        const file = remark().use(stripMarkdown as any).processSync(text);
+        const file = remark().use(stripMarkdown as unknown as Plugin).processSync(text);
         text = String(file);
 
         // 3. Post-processing: specific cleanups for this app

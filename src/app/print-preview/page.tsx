@@ -1,6 +1,7 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useState, Suspense } from "react";
+import { useCallback, useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
@@ -28,10 +29,7 @@ function PrintPreviewContent() {
     const [showQuestionText, setShowQuestionText] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-    useEffect(() => {
-        fetchItems();
-    }, []);
-    const fetchItems = async () => {
+    const fetchItems = useCallback(async () => {
         try {
             const params = new URLSearchParams(searchParams.toString());
             // 打印预览需要所有符合条件的数据，设置较大的 pageSize
@@ -44,7 +42,11 @@ function PrintPreviewContent() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [searchParams]);
+
+    useEffect(() => {
+        fetchItems();
+    }, [fetchItems]);
 
     const handlePrint = () => {
         window.print();
@@ -205,7 +207,7 @@ function PrintPreviewContent() {
                     } else {
                         try {
                             tags = JSON.parse(item.knowledgePoints || "[]");
-                        } catch (e) {
+                        } catch {
                             tags = [];
                         }
                     }

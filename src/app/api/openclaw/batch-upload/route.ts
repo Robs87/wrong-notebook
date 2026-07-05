@@ -6,12 +6,12 @@ import { calculateGrade } from "@/lib/grade-calculator";
 import { inferSubjectFromName } from "@/lib/knowledge-tags";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { compare } from "bcryptjs";
+import { getErrorMessage, getErrorName, getErrorStack } from "@/lib/error-utils";
 
 const logger = createLogger('api:openclaw:batch-upload');
 
 const MAX_IMAGES = 20;
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
-const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png'];
 const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png'];
 
 interface ImageData {
@@ -86,10 +86,10 @@ async function callOpenclawAgent(imageBase64: string, mimeType: string, timeout:
 
         const data = await response.json() as OpenclawResponse;
         return data;
-    } catch (error: any) {
+    } catch (error) {
         clearTimeout(timeoutId);
-        
-        if (error.name === 'AbortError') {
+
+        if (getErrorName(error) === 'AbortError') {
             logger.error('Openclaw agent timeout');
             return {
                 success: false,
@@ -97,10 +97,11 @@ async function callOpenclawAgent(imageBase64: string, mimeType: string, timeout:
             };
         }
         
-        logger.error({ error: error?.message || String(error) }, 'Openclaw agent request failed');
+        const errorMessage = getErrorMessage(error, String(error));
+        logger.error({ error: errorMessage }, 'Openclaw agent request failed');
         return {
             success: false,
-            error: `识别服务请求失败: ${error?.message || String(error)}`,
+            error: `识别服务请求失败: ${errorMessage}`,
         };
     }
 }
@@ -399,12 +400,13 @@ export async function POST(req: Request) {
                 });
 
                 logger.info({ index: i, errorItemId: errorItem.id }, 'Error item created successfully');
-            } catch (dbError: any) {
-                logger.error({ index: i, error: dbError?.message || String(dbError) }, 'Failed to create error item');
+            } catch (dbError) {
+                const dbErrorMessage = getErrorMessage(dbError, String(dbError));
+                logger.error({ index: i, error: dbErrorMessage }, 'Failed to create error item');
                 results.push({
                     success: false,
                     index: i,
-                    error: `数据库写入失败: ${dbError?.message || String(dbError)}`,
+                    error: `数据库写入失败: ${dbErrorMessage}`,
                 });
             }
         }
@@ -427,13 +429,14 @@ export async function POST(req: Request) {
             failCount,
             results,
         }, { status: statusCode });
-    } catch (error: any) {
-        logger.error({ error: error?.message || String(error), stack: error?.stack }, 'Batch upload error');
+    } catch (error) {
+        const errorMessage = getErrorMessage(error, String(error));
+        logger.error({ error: errorMessage, stack: getErrorStack(error) }, 'Batch upload error');
         return createErrorResponse(
-            error?.message || '批量上传失败',
+            errorMessage || '批量上传失败',
             500,
             ErrorCode.INTERNAL_ERROR,
-            error?.message || String(error)
+            errorMessage
         );
     }
 }

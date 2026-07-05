@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { createLogger } from "@/lib/logger";
+import { Prisma } from "@prisma/client";
 
 const logger = createLogger('api:tags:suggestions');
 
@@ -36,7 +37,7 @@ export async function GET(req: Request) {
         // 按照现有逻辑，很多地方都有 fallback 到默认用户的逻辑，这里也保持一致比较好，
         // 或者只返回系统标签。稳妥起见，如果已登录则返回用户标签。
 
-        const whereCondition: any = {
+        const whereCondition: Prisma.KnowledgeTagWhereInput = {
             ...(subject ? { subject } : {}),
             OR: [
                 { isSystem: true },
@@ -121,4 +122,3 @@ export async function GET(req: Request) {
         );
     }
 }
-

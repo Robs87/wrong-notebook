@@ -136,7 +136,7 @@ describe('AI Provider 初始化', () => {
                     activeInstanceId: 'test',
                 },
                 gemini: { apiKey: '', model: '' }
-            } as any);
+            } as never);
             vi.mocked(getActiveOpenAIConfig).mockReturnValue({
                 id: 'test',
                 name: 'Test',
@@ -157,7 +157,7 @@ describe('AI Provider 初始化', () => {
                 aiProvider: 'gemini',
                 gemini: { apiKey: 'test-gemini-key', model: 'gemini-2.0-flash' },
                 openai: { apiKey: '', model: '' }
-            } as any);
+            } as never);
 
             const service = getAIService();
 
@@ -170,7 +170,7 @@ describe('AI Provider 初始化', () => {
             vi.mocked(getAppConfig).mockReturnValue({
                 aiProvider: 'unknown',
                 gemini: { apiKey: 'test-gemini-key' },
-            } as any);
+            } as never);
 
             const service = getAIService();
 

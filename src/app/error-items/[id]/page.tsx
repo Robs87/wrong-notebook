@@ -1,6 +1,7 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,7 +15,8 @@ import { TagInput } from "@/components/tag-input";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiClient } from "@/lib/api-client";
-import { UserProfile, Notebook } from "@/types/api";
+import { getErrorDataMessage, getErrorMessage } from "@/lib/error-utils";
+import { UserProfile } from "@/types/api";
 import { inferSubjectFromName } from "@/lib/knowledge-tags";
 import { getMistakeStatusLabel, normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 import { NotebookSelector } from "@/components/notebook-selector";
@@ -69,6 +71,19 @@ export default function ErrorDetailPage() {
     const [isAnalyzingGeogebra, setIsAnalyzingGeogebra] = useState(false);
     const [geogebraError, setGeogebraError] = useState<string | null>(null);
 
+    const fetchItem = useCallback(async (id: string) => {
+        try {
+            const data = await apiClient.get<ErrorItemDetail>(`/api/error-items/${id}`);
+            setItem(data);
+        } catch (error) {
+            console.error(error);
+            alert(t.common?.messages?.loadFailed || 'Failed to load item');
+            router.push("/notebooks");
+        } finally {
+            setLoading(false);
+        }
+    }, [router, t.common?.messages?.loadFailed]);
+
     useEffect(() => {
         // Fetch user info for education stage
         apiClient.get<UserProfile>("/api/user")
@@ -82,20 +97,7 @@ export default function ErrorDetailPage() {
         if (params.id) {
             fetchItem(params.id as string);
         }
-    }, [params.id]);
-
-    const fetchItem = async (id: string) => {
-        try {
-            const data = await apiClient.get<ErrorItemDetail>(`/api/error-items/${id}`);
-            setItem(data);
-        } catch (error) {
-            console.error(error);
-            alert(t.common?.messages?.loadFailed || 'Failed to load item');
-            router.push("/notebooks");
-        } finally {
-            setLoading(false);
-        }
-    };
+    }, [fetchItem, params.id]);
 
     const handleAnalyzeGeogebra = async () => {
         if (!item) return;
@@ -113,9 +115,9 @@ export default function ErrorDetailPage() {
             } else {
                 setGeogebraError(result.description || "该题目不适合用 GeoGebra 演示");
             }
-        } catch (error: any) {
+        } catch (error) {
             console.error("GeoGebra analysis failed:", error);
-            const msg = error?.data?.message || error?.message || "";
+            const msg = getErrorDataMessage(error) || getErrorMessage(error);
             if (msg.includes("AI_AUTH_ERROR")) {
                 setGeogebraError("AI 认证失败，请检查设置");
             } else if (msg.includes("AI_CONNECTION")) {
@@ -183,7 +185,7 @@ export default function ErrorDetailPage() {
                 try {
                     const tags = JSON.parse(item.knowledgePoints);
                     setTagsInput(tags);
-                } catch (e) {
+                } catch {
                     setTagsInput([]);
                 }
             } else {
@@ -405,7 +407,7 @@ export default function ErrorDetailPage() {
         try {
             const parsed = JSON.parse(item.knowledgePoints);
             tags = Array.isArray(parsed) ? parsed : [];
-        } catch (e) {
+        } catch {
             tags = [];
         }
     }

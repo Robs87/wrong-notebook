@@ -86,7 +86,7 @@ describe('/api/error-items', () => {
         mocks.mockPrismaSubject.findUnique.mockResolvedValue(null);
 
         // Default: knowledgeTag returns a mock tag (used when finding existing tags)
-        mocks.mockPrismaKnowledgeTag.findFirst.mockImplementation(async (args: any) => {
+        mocks.mockPrismaKnowledgeTag.findFirst.mockImplementation(async (args: { where?: { name?: string } }) => {
             // Return a mock tag based on the search name
             const name = args?.where?.name;
             if (name) {
@@ -96,7 +96,7 @@ describe('/api/error-items', () => {
         });
 
         // Default: create returns the created tag
-        mocks.mockPrismaKnowledgeTag.create.mockImplementation(async (args: any) => ({
+        mocks.mockPrismaKnowledgeTag.create.mockImplementation(async (args: { data: Record<string, unknown> }) => ({
             id: `tag-new-${Date.now()}`,
             ...args.data,
         }));

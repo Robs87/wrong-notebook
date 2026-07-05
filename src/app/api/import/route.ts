@@ -112,7 +112,7 @@ export async function POST(req: Request) {
     const importAll = searchParams.get('all') === 'true';
 
     // 只有管理员可以导入全部数据
-    if (importAll && (session.user as any).role !== 'admin') {
+    if (importAll && session.user.role !== 'admin') {
         return forbidden("Admin role required");
     }
 

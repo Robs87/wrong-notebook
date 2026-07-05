@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -25,17 +25,7 @@ export function TagInput({ value = [], onChange, placeholder = "Enter tags...", 
     const inputRef = useRef<HTMLInputElement>(null);
     const suggestionsRef = useRef<HTMLDivElement>(null);
 
-    // 获取标签建议
-    useEffect(() => {
-        if (input.trim()) {
-            fetchSuggestions(input);
-        } else {
-            setSuggestions([]);
-            setShowSuggestions(false);
-        }
-    }, [input, subject, gradeStage]);
-
-    const fetchSuggestions = async (query: string) => {
+    const fetchSuggestions = useCallback(async (query: string) => {
         try {
             // 从服务器获取标签建议（现在从数据库查询）
             const params = new URLSearchParams({ q: query });
@@ -58,6 +48,16 @@ export function TagInput({ value = [], onChange, placeholder = "Enter tags...", 
             setSelectedIndex(0);
         } catch (error) {
             console.error("Failed to fetch suggestions:", error);
+        }
+    }, [gradeStage, subject, value]);
+
+    const handleInputChange = (nextInput: string) => {
+        setInput(nextInput);
+        if (nextInput.trim()) {
+            void fetchSuggestions(nextInput);
+        } else {
+            setSuggestions([]);
+            setShowSuggestions(false);
         }
     };
 
@@ -135,7 +135,7 @@ export function TagInput({ value = [], onChange, placeholder = "Enter tags...", 
                     ref={inputRef}
                     type="text"
                     value={input}
-                    onChange={(e) => setInput(e.target.value)}
+                    onChange={(e) => handleInputChange(e.target.value)}
                     onKeyDown={handleKeyDown}
                     onFocus={() => {
                         if (suggestions.length > 0) {

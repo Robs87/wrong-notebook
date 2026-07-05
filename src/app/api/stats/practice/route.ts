@@ -8,14 +8,13 @@ import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('api:stats:practice');
 
-export async function GET(req: Request) {
+export async function GET() {
     const session = await getServerSession(authOptions);
 
     if (!session || !session.user) {
         return unauthorized();
     }
 
-    // @ts-ignore
     const userId = session.user.id;
 
     try {

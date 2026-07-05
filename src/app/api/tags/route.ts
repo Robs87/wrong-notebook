@@ -20,10 +20,18 @@ interface TagTreeNode {
     children: TagTreeNode[];
 }
 
+interface TagTreeRow {
+    id: string;
+    name: string;
+    code: string | null;
+    parentId: string | null;
+    isSystem: boolean;
+}
+
 /**
  * 构建标签树
  */
-function buildTagTree(tags: any[]): TagTreeNode[] {
+function buildTagTree(tags: TagTreeRow[]): TagTreeNode[] {
     const tagMap = new Map<string, TagTreeNode>();
     const roots: TagTreeNode[] = [];
 
