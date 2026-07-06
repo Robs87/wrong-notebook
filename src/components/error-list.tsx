@@ -25,6 +25,7 @@ import { apiClient } from "@/lib/api-client";
 import { cleanMarkdown } from "@/lib/markdown-utils";
 import { Pagination } from "@/components/ui/pagination";
 import { DEFAULT_PAGE_SIZE } from "@/lib/constants/pagination";
+import { parsePageParam, clampPage } from "@/lib/pagination-state";
 import { getMistakeStatusLabel } from "@/lib/mistake-status";
 
 interface ErrorListProps {
@@ -49,8 +50,11 @@ export function ErrorList({ subjectId, subjectName }: ErrorListProps = {}) {
     const [paperLevelFilter, setPaperLevelFilter] = useState<"all" | "a" | "b" | "other">("all");
     const [selectedTag, setSelectedTag] = useState<string | null>(null);
     const [expandedTags, setExpandedTags] = useState<Set<string>>(new Set());
-    // 分页状态
-    const [page, setPage] = useState(1);
+    // 分页状态：从 URL 的 `page` 查询参数恢复，避免进入详情后返回时被重置到第一页
+    const [page, setPage] = useState<number>(() => {
+        if (typeof window === "undefined") return 1;
+        return parsePageParam(new URLSearchParams(window.location.search).get("page"));
+    });
     const [pageSize] = useState(DEFAULT_PAGE_SIZE);
     const [total, setTotal] = useState(0);
     const [totalPages, setTotalPages] = useState(0);
@@ -227,6 +231,33 @@ export function ErrorList({ subjectId, subjectName }: ErrorListProps = {}) {
         // 正常请求数据
         fetchItems();
     }, [fetchItems, page, search, masteryFilter, timeFilter, selectedTag, subjectId, gradeFilter, chapterFilter, paperLevelFilter]);
+
+    // 将当前页码同步到 URL（replaceState，不污染历史栈），使返回列表时能恢复到同一页
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        const url = new URL(window.location.href);
+        if (page <= 1) {
+            url.searchParams.delete("page");
+        } else {
+            url.searchParams.set("page", String(page));
+        }
+        const next = `${url.pathname}${url.search}`;
+        const current = `${window.location.pathname}${window.location.search}`;
+        if (next !== current) {
+            // 保留 Next.js 路由内部状态（history.state）
+            window.history.replaceState(window.history.state, "", next);
+        }
+    }, [page]);
+
+    // 总页数变少（如删除错题后）时，避免停留在越界的页码上
+    useEffect(() => {
+        if (totalPages > 0) {
+            const clamped = clampPage(page, totalPages);
+            if (clamped !== page) {
+                setPage(clamped);
+            }
+        }
+    }, [totalPages, page]);
 
     return (
         <div className="space-y-6">

@@ -417,11 +417,22 @@ export default function ErrorDetailPage() {
             <div className="container mx-auto p-4 space-y-6 pb-20">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div className="flex items-center gap-4">
-                        <Link href={item.subjectId ? `/notebooks/${item.subjectId}` : "/notebooks"}>
-                            <Button variant="ghost" size="icon">
-                                <ArrowLeft className="w-4 h-4" />
-                            </Button>
-                        </Link>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={t.common?.back || "Back"}
+                            onClick={() => {
+                                // 优先返回上一页（保留错题列表的分页位置），无历史时回退到错题本
+                                const fallback = item.subjectId ? `/notebooks/${item.subjectId}` : "/notebooks";
+                                if (typeof window !== "undefined" && window.history.length > 1) {
+                                    router.back();
+                                } else {
+                                    router.push(fallback);
+                                }
+                            }}
+                        >
+                            <ArrowLeft className="w-4 h-4" />
+                        </Button>
                         <h1 className="text-2xl font-bold">{t.detail.title}</h1>
                     </div>
 
