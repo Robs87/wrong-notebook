@@ -73,6 +73,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/config ./config
 COPY --from=builder --chown=nextjs:nodejs /app/dist-scripts ./dist-scripts
 COPY --from=builder --chown=nextjs:nodejs /app/scripts/seed-admin.js ./dist-scripts/scripts/seed-admin.js
 
+# seed-admin.js (run by the entrypoint) require('bcryptjs'). The Next.js
+# standalone trace only ships bcryptjs's ESM entry, so require() — which resolves
+# to the CJS "umd/index.js" — fails with MODULE_NOT_FOUND in the runner image.
+# Copy the full package from the builder so the runtime script can resolve it.
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/bcryptjs ./node_modules/bcryptjs
+
 # Create data directory for SQLite persistence
 RUN mkdir -p /app/data && chown -R nextjs:nodejs /app/data
 
