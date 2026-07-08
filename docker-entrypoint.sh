@@ -14,6 +14,52 @@ REBUILD_TAGS_SCRIPT="/app/dist-scripts/scripts/rebuild-system-tags.js"
 # Get current app version from package.json
 CURRENT_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "unknown")
 
+# ─────────────────────────────────────────────────────────────
+# 前置校验：NEXTAUTH_SECRET
+# 生产镜像（NODE_ENV=production）运行时缺/弱 NEXTAUTH_SECRET，
+# src/lib/auth.ts 的 assertSecretStrength() 会在 import 阶段直接 throw，
+# 表现为「站点 500 / 登录页打不开 / 容器反复重启」，报错淹没在日志里。
+# 在这里提前拦截，给出清晰的中文指引，避免用户排查半天才发现少配环境变量。
+# build 阶段（NEXT_PHASE=phase-production-build）auth.ts 本就跳过校验，
+# 这里也跳过，保持一致。
+# ─────────────────────────────────────────────────────────────
+if [ "$NEXT_PHASE" != "phase-production-build" ]; then
+    SECRET="${NEXTAUTH_SECRET:-}"
+    if [ -z "$SECRET" ]; then
+        echo ""
+        echo "============================================================"
+        echo " ❌ 启动失败：缺少 NEXTAUTH_SECRET 环境变量"
+        echo "------------------------------------------------------------"
+        echo " 本镜像运行在生产模式，必须配置一个高强度密钥用于签发登录"
+        echo " session，否则任何人都能离线伪造登录态（含管理员）。"
+        echo ""
+        echo " 解决方法（任选其一）："
+        echo "   1) Unraid：容器编辑 → Add Variable"
+        echo "        Name:  NEXTAUTH_SECRET"
+        echo "        Value: openssl rand -base64 32 生成的字符串"
+        echo "   2) docker run：  -e NEXTAUTH_SECRET=\$(openssl rand -base64 32)"
+        echo "   3) docker-compose.yml： environment: 增加 NEXTAUTH_SECRET"
+        echo ""
+        echo " 生成密钥命令："
+        echo "   openssl rand -base64 32"
+        echo "============================================================"
+        echo ""
+        exit 1
+    fi
+    # 与 src/lib/auth.ts 的 weakValues / 长度门槛保持一致
+    case "$SECRET" in
+        supersecret-dev-secret|changeme|secret|your-secret-key)
+            echo "❌ NEXTAUTH_SECRET 是已知占位符（$SECRET），请用 openssl rand -base64 32 重新生成。" >&2
+            exit 1
+            ;;
+    esac
+    SECRET_LEN=${#SECRET}
+    if [ "$SECRET_LEN" -lt 16 ]; then
+        echo "❌ NEXTAUTH_SECRET 太短（$SECRET_LEN 字符，至少 16）。请用 openssl rand -base64 32 重新生成。" >&2
+        exit 1
+    fi
+fi
+
 # Fix permissions for data and config directories
 chown -R nextjs:nodejs /app/data /app/config
 
