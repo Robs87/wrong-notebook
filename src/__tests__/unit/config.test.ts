@@ -3,6 +3,7 @@
  * 测试 getAppConfig / loadConfigFromDB / updateAppConfig / 密钥加密往返
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'fs';
 
 // Mock logger
 vi.mock('@/lib/logger', () => ({
@@ -48,6 +49,9 @@ describe('config module (M5 DB-backed)', () => {
         process.env = { ...originalEnv, NEXTAUTH_SECRET: 'test-secret-for-encryption-32b!' };
         mockAppSetting.findUnique.mockResolvedValue(null);
         mockAppSetting.upsert.mockResolvedValue({});
+        // 清空 globalThis 上的共享配置缓存，保证用例之间互不影响
+        // （生产中该缓存跨 chunk 共享；测试需显式重置）
+        delete (globalThis as Record<symbol, unknown>)[Symbol.for('wrong-notebook.appConfig.v1')];
         vi.resetModules();
     });
 
@@ -189,6 +193,136 @@ describe('config module (M5 DB-backed)', () => {
             const active = getActiveOpenAIConfig();
             expect(active?.id).toBe('i2');
             expect(active?.name).toBe('B');
+        });
+    });
+
+    describe('部分迁移：DB 不完整时从 legacy JSON 安全补回', () => {
+        afterEach(() => {
+            vi.restoreAllMocks();
+        });
+
+        it('补回 prompts.bySubject 与额外 openai 实例，且不覆盖 DB 已有加密 apiKey', async () => {
+            const { encryptSecret } = await import('@/lib/crypto-utils');
+            // DB 配置：仅 1 个 openai 实例（加密密钥），prompts.bySubject 为空
+            const dbConfig = {
+                aiProvider: 'openai',
+                openai: {
+                    instances: [
+                        { id: 'db-1', name: '主实例', apiKey: encryptSecret('secret-db'), baseUrl: 'https://db.example.com/v1', model: 'm1' },
+                    ],
+                    activeInstanceId: 'db-1',
+                },
+                prompts: { analyze: '', similar: '', reanswer: '' },
+            };
+            mockAppSetting.findUnique.mockResolvedValue({ id: 1, value: JSON.stringify(dbConfig) });
+
+            // legacy JSON：3 个实例（l-1 与 DB 同 baseUrl 应被去重跳过）+ bySubject 完整
+            const legacy = {
+                aiProvider: 'openai',
+                openai: {
+                    instances: [
+                        { id: 'l-1', name: '主实例(旧)', apiKey: 'legacy-should-not-overwrite', baseUrl: 'https://db.example.com/v1', model: 'm1' },
+                        { id: 'l-2', name: 'agnes', apiKey: 'legacy-agnes-key', baseUrl: 'https://apihub.agnes-ai.com/v1', model: 'agnes-2.0-flash' },
+                        { id: 'l-3', name: 'bigmodel', apiKey: 'legacy-bigmodel-key', baseUrl: 'https://open.bigmodel.cn/api', model: 'glm-4' },
+                    ],
+                    activeInstanceId: 'l-2',
+                },
+                prompts: {
+                    bySubject: {
+                        '一建管理': { analyze: 'p-analyze', similar: 'p-similar', reanswer: 'p-reanswer' },
+                    },
+                },
+                timeouts: { analyze: 240000 },
+            };
+            const existsSpy = vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+            const readSpy = vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify(legacy));
+
+            await importFresh();
+            await loadConfigFromDB();
+            const config = getAppConfig();
+
+            // prompts.bySubject 被补回
+            expect(config.prompts?.bySubject?.['一建管理']).toBeDefined();
+            expect(config.prompts?.bySubject?.['一建管理'].analyze).toBe('p-analyze');
+
+            // openai 实例从 1 补到 3（l-1 因与 DB 同 baseUrl 被去重，l-2/l-3 被补回）
+            expect(config.openai?.instances?.length).toBe(3);
+
+            // DB 已有实例的加密 apiKey 不被 legacy 覆盖
+            const dbInst = config.openai?.instances?.find((i) => i.id === 'db-1');
+            expect(dbInst?.apiKey).toBe('secret-db');
+
+            // 补回的 agnes 实例存在
+            const agnes = config.openai?.instances?.find((i) => i.baseUrl === 'https://apihub.agnes-ai.com/v1');
+            expect(agnes?.model).toBe('agnes-2.0-flash');
+
+            // 合并后应重新加密持久化（一次性修复）
+            expect(mockAppSetting.upsert).toHaveBeenCalled();
+            const upsertCall = mockAppSetting.upsert.mock.calls.at(-1)?.[0] as { update?: { value?: string } } | undefined;
+            const stored = JSON.parse(upsertCall?.update?.value ?? '{}');
+            // 持久化的密钥必须为密文，明文不得落库
+            expect(stored.openai.instances[0].apiKey).not.toBe('secret-db');
+
+            existsSpy.mockRestore();
+            readSpy.mockRestore();
+        });
+
+        it('DB 已完整时不会触发 legacy 合并（避免复活用户删除的字段）', async () => {
+            const { encryptSecret } = await import('@/lib/crypto-utils');
+            // DB 已有 2 个实例 + 非空 bySubject，属于完整配置
+            const dbConfig = {
+                aiProvider: 'openai',
+                openai: {
+                    instances: [
+                        { id: 'a', name: 'A', apiKey: encryptSecret('ka'), baseUrl: 'https://a.example/v1', model: 'm' },
+                        { id: 'b', name: 'B', apiKey: encryptSecret('kb'), baseUrl: 'https://b.example/v1', model: 'm' },
+                    ],
+                    activeInstanceId: 'a',
+                },
+                prompts: { bySubject: { 数学: { analyze: 'x', similar: '', reanswer: '' } } },
+            };
+            mockAppSetting.findUnique.mockResolvedValue({ id: 1, value: JSON.stringify(dbConfig) });
+
+            const legacy = {
+                openai: {
+                    instances: [{ id: 'z', name: 'Z', apiKey: 'legacy-z', baseUrl: 'https://z.example/v1', model: 'm' }],
+                },
+                prompts: { bySubject: { 一建管理: { analyze: 'legacy-prompt', similar: '', reanswer: '' } } },
+            };
+            const existsSpy = vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+            const readSpy = vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify(legacy));
+
+            await importFresh();
+            await loadConfigFromDB();
+            const config = getAppConfig();
+
+            // DB 实例数量(2) 不小于 legacy(1)，不应补回；bySubject 保留 DB 的，不被 legacy 覆盖
+            expect(config.openai?.instances?.length).toBe(2);
+            expect(config.prompts?.bySubject?.['数学']).toBeDefined();
+            expect(config.prompts?.bySubject?.['一建管理']).toBeUndefined();
+            // 未触发合并，不应再次持久化
+            expect(mockAppSetting.upsert).not.toHaveBeenCalled();
+
+            existsSpy.mockRestore();
+            readSpy.mockRestore();
+        });
+    });
+
+    describe('globalThis 共享缓存（跨 bundle chunk）', () => {
+        it('缓存经 globalThis 跨模块实例共享，而非各自独立', async () => {
+            // 模块实例 1：加载并写入一个非默认值（azure）到全局缓存
+            const mod1 = await import('@/lib/config');
+            await mod1.loadConfigFromDB();
+            await mod1.updateAppConfig({ aiProvider: 'azure' });
+            expect(mod1.getAppConfig().aiProvider).toBe('azure');
+
+            // 模拟新 chunk 重新 import 模块（resetModules 后函数引用是全新的）
+            vi.resetModules();
+            const mod2 = await import('@/lib/config');
+
+            // 若缓存为模块级，mod2 会回退 DEFAULT_CONFIG(gemini)；
+            // 经 globalThis 共享则应读到 mod1 写入的 azure。
+            expect(mod2.getAppConfig().aiProvider).toBe('azure');
         });
     });
 });

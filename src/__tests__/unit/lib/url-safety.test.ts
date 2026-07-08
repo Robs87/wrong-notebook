@@ -43,6 +43,28 @@ describe('isPrivateHost', () => {
         expect(isPrivateHost('224.0.0.1')).toBe(true);
         expect(isPrivateHost('240.0.0.1')).toBe(true);
     });
+
+    it('公网 IPv6（如 Cloudflare）不判为私有', () => {
+        // 关键修复：此前任何非白名单 IPv6 都被误判 private，误杀公网 provider
+        expect(isPrivateHost('2606:4700:4700::1111')).toBe(false); // Cloudflare DNS
+        expect(isPrivateHost('2606:4700::1111')).toBe(false);
+        expect(isPrivateHost('2a00:1450:4001:830::200e')).toBe(false); // Google 公网
+    });
+
+    it('私有/内部 IPv6 仍判为私有', () => {
+        expect(isPrivateHost('::1')).toBe(true); // 环回
+        expect(isPrivateHost('0:0:0:0:0:0:0:1')).toBe(true);
+        expect(isPrivateHost('::')).toBe(true); // 未指定
+        expect(isPrivateHost('fe80::1')).toBe(true); // 链路本地
+        expect(isPrivateHost('febf::1')).toBe(true); // fe80::/10 上界
+        expect(isPrivateHost('fc00::1')).toBe(true); // ULA
+        expect(isPrivateHost('fd00::1')).toBe(true); // ULA
+        expect(isPrivateHost('ff00::1')).toBe(true); // 多播
+        expect(isPrivateHost('2001:db8::1')).toBe(true); // 文档保留
+        expect(isPrivateHost('::ffff:10.0.0.1')).toBe(true); // IPv4-mapped 私网
+        expect(isPrivateHost('::ffff:169.254.169.254')).toBe(true); // 映射到 metadata
+        expect(isPrivateHost('::ffff:8.8.8.8')).toBe(false); // 映射到公网 IPv4 应放行
+    });
 });
 
 describe('assertSafeBaseUrl', () => {
@@ -134,5 +156,23 @@ describe('assertSafeBaseUrl', () => {
     it('DEFAULT_ALLOWED_HOSTS 包含 Gemini 与 OpenAI 官方主机', () => {
         expect(DEFAULT_ALLOWED_HOSTS.has('generativelanguage.googleapis.com')).toBe(true);
         expect(DEFAULT_ALLOWED_HOSTS.has('api.openai.com')).toBe(true);
+    });
+
+    it('用户实际 provider 网关在默认白名单内，直接放行（不做 DNS）', async () => {
+        // 关键修复：此前默认白名单只有 google/openai，agnes/智谱/商汤被误判私网拒绝
+        expect(DEFAULT_ALLOWED_HOSTS.has('apihub.agnes-ai.com')).toBe(true);
+        expect(DEFAULT_ALLOWED_HOSTS.has('open.bigmodel.cn')).toBe(true);
+        expect(DEFAULT_ALLOWED_HOSTS.has('token.sensenova.cn')).toBe(true);
+
+        // resolves 断言必须 await，否则 Vitest 会告警且断言未真正完成
+        await expect(assertSafeBaseUrl('https://apihub.agnes-ai.com/v1')).resolves.toMatchObject({ ok: true });
+        await expect(assertSafeBaseUrl('https://open.bigmodel.cn/api/paas/v4')).resolves.toMatchObject({ ok: true });
+        await expect(assertSafeBaseUrl('https://token.sensenova.cn/v1')).resolves.toMatchObject({ ok: true });
+    });
+
+    it('公网 IPv6 字面量 baseUrl 放行（关闭 DNS 时）', async () => {
+        // 关键修复：公网 IPv6 不再被 isPrivateHost 误杀
+        const r = await assertSafeBaseUrl('https://[2606:4700:4700::1111]/v1', [], false);
+        expect(r.ok).toBe(true);
     });
 });

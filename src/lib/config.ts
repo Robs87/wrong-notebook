@@ -185,7 +185,25 @@ function mergeWithDefaults(userConfig: Partial<AppConfig>): AppConfig {
 
 // ============ 内存缓存（保持 getAppConfig 同步签名） ============
 
-let cachedConfig: AppConfig | null = null;
+/**
+ * 跨 bundle chunk 共享的 AppConfig 缓存。
+ *
+ * 关键背景：Next standalone / Turopack 打包时，不同 route chunk 可能各自持有一份
+ * 模块实例，模块级 `let cachedConfig` 会在每个 chunk 里独立存在，导致某 route 读到
+ * 空缓存而 fallback 到 DEFAULT_CONFIG=gemini（生产实测过这个故障）。
+ * 用 globalThis + 全局 Symbol 把缓存提升到进程级，所有 chunk 共享同一份状态。
+ */
+const GLOBAL_CONFIG_KEY = Symbol.for('wrong-notebook.appConfig.v1');
+
+type GlobalWithConfig = typeof globalThis & { [GLOBAL_CONFIG_KEY]?: AppConfig | null };
+
+function getCachedConfig(): AppConfig | null {
+    return (globalThis as GlobalWithConfig)[GLOBAL_CONFIG_KEY] ?? null;
+}
+
+function setCachedConfig(config: AppConfig | null): void {
+    (globalThis as GlobalWithConfig)[GLOBAL_CONFIG_KEY] = config;
+}
 
 /**
  * 同步读取配置：返回内存缓存。
@@ -196,14 +214,16 @@ let cachedConfig: AppConfig | null = null;
  * loadConfigFromDB() 填充。
  */
 export function getAppConfig(): AppConfig {
-    if (cachedConfig) return cachedConfig;
+    const cached = getCachedConfig();
+    if (cached) return cached;
     return DEFAULT_CONFIG;
 }
 
 /**
  * 从 DB 加载配置到内存缓存。启动时调用。
  * - DB 无 AppSetting 行：尝试从旧 JSON 文件迁移；无 JSON 则用 DEFAULT_CONFIG。
- * - DB 有行：解密密钥字段后缓存。
+ * - DB 有行：解密密钥字段后缓存；若检测到 DB 明显比旧 JSON 不完整（如 bySubject 丢失、
+ *   openai 实例只剩 1 个），保守地从旧 JSON 补回非敏感完整配置，再加密持久化。
  * 首次写入新行（含迁移结果），之后以 DB 为准。
  */
 export async function loadConfigFromDB(): Promise<void> {
@@ -211,8 +231,19 @@ export async function loadConfigFromDB(): Promise<void> {
         const row = await prisma.appSetting.findUnique({ where: { id: 1 } });
         if (row) {
             const parsed = JSON.parse(row.value) as AppConfig;
-            cachedConfig = decryptAppConfig(mergeWithDefaults(parsed));
-            logger.info('Config loaded from DB');
+            const decrypted = decryptAppConfig(parsed);
+            // 旧 JSON 仅用于"DB 明显不完整"时的安全补回，DB 已有内容（含密钥）始终优先
+            const legacy = migrateFromBootstrapShape(migrateFromLegacyFile());
+            const { config: recovered, merged } = mergeIncompleteFromLegacy(decrypted, legacy);
+            const finalConfig = mergeWithDefaults(recovered);
+            setCachedConfig(finalConfig);
+            if (merged) {
+                // 补回内容后立即持久化（加密），避免每次启动重复合并
+                await persistConfig(finalConfig);
+                logger.info('Config loaded from DB; recovered missing fields from legacy JSON and persisted');
+            } else {
+                logger.info('Config loaded from DB');
+            }
             return;
         }
 
@@ -220,13 +251,13 @@ export async function loadConfigFromDB(): Promise<void> {
         const migrated = migrateFromLegacyFile();
         const toStore = migrateFromBootstrapShape(migrated);
         const merged = mergeWithDefaults(toStore);
-        cachedConfig = merged;
+        setCachedConfig(merged);
         // 持久化到 DB（加密密钥）
         await persistConfig(merged);
         logger.info({ source: migrated ? 'legacy-json' : 'default' }, 'Config initialized and persisted to DB');
     } catch (error) {
         logger.error({ error: error instanceof Error ? error.message : String(error) }, 'Failed to load config from DB, falling back to defaults');
-        cachedConfig = DEFAULT_CONFIG;
+        setCachedConfig(DEFAULT_CONFIG);
     }
 }
 
@@ -255,6 +286,88 @@ function migrateFromBootstrapShape(config: Partial<AppConfig> | null): Partial<A
         delete (normalized.azure as { deployment?: string }).deployment;
     }
     return normalized;
+}
+
+/**
+ * 合并 openai 实例：DB 已有实例全部保留（含已加密密钥），仅补回 DB 中缺失的 legacy 实例。
+ * 按 baseUrl 去重（provider 端点最稳定），避免重复添加或覆盖 DB 已有密钥。
+ */
+function mergeInstancesFromLegacy(dbInstances: OpenAIInstance[], legacyInstances: OpenAIInstance[]): OpenAIInstance[] {
+    const result: OpenAIInstance[] = dbInstances.map((inst) => ({ ...inst })); // DB 优先（密钥不可丢）
+    const seenBases = new Set(dbInstances.map((i) => (i.baseUrl || '').trim()).filter(Boolean));
+    for (const legacy of legacyInstances) {
+        const base = (legacy.baseUrl || '').trim();
+        // 同一 baseUrl 已存在 → 跳过（保留 DB 版本，避免覆盖密钥/产生重复）
+        if (base && seenBases.has(base)) continue;
+        if (base) seenBases.add(base);
+        result.push({ ...legacy });
+    }
+    return result;
+}
+
+/**
+ * 当 DB 配置存在但明显比 legacy JSON 不完整时，保守补回非敏感字段。
+ *
+ * 触发条件（仅在 legacy 明显更完整时执行，避免每次启动复活用户主动删除的字段）：
+ *  - legacy.prompts.bySubject 非空且 DB.bySubject 为空；
+ *  - legacy.openai.instances 数量更多（≥2）且 DB 实例更少；
+ *  - legacy.timeouts 有值而 DB 缺失。
+ *
+ * 安全原则：
+ *  - DB 已有内容（含已解密密钥）始终优先，绝不覆盖/丢失；
+ *  - 只补回 DB 缺失的非敏感字段（提示词、缺失的 provider 实例、超时）；
+ *  - 返回 merged=true 时调用方会重新加密持久化，使下次启动不再触发（一次性修复）。
+ */
+function mergeIncompleteFromLegacy(
+    dbConfig: AppConfig,
+    legacy: Partial<AppConfig> | null
+): { config: AppConfig; merged: boolean } {
+    if (!legacy) return { config: dbConfig, merged: false };
+
+    let merged = false;
+    const result: AppConfig = JSON.parse(JSON.stringify(dbConfig));
+
+    // 1) prompts.bySubject：legacy 非空且 DB 为空 → 补回（提示词无密钥，安全）
+    const legacyBySubject = legacy.prompts?.bySubject;
+    if (legacyBySubject && Object.keys(legacyBySubject).length > 0) {
+        const dbBySubject = result.prompts?.bySubject;
+        const dbEmpty = !dbBySubject || Object.keys(dbBySubject).length === 0;
+        if (dbEmpty) {
+            result.prompts = {
+                ...(result.prompts || {}),
+                bySubject: JSON.parse(JSON.stringify(legacyBySubject)),
+            };
+            merged = true;
+        }
+    }
+
+    // 2) openai.instances：legacy 实例更多（≥2）且 DB 更少 → 补回缺失实例（DB 实例/密钥优先）
+    const legacyInstances = legacy.openai && !isLegacyOpenAIConfig(legacy.openai)
+        ? legacy.openai.instances
+        : undefined;
+    if (legacyInstances && legacyInstances.length >= 2) {
+        const dbInstances = result.openai?.instances || [];
+        if (dbInstances.length < legacyInstances.length) {
+            const combined = mergeInstancesFromLegacy(dbInstances, legacyInstances);
+            if (combined.length > dbInstances.length) {
+                result.openai = {
+                    instances: combined,
+                    activeInstanceId: result.openai?.activeInstanceId,
+                };
+                merged = true;
+            }
+        }
+    }
+
+    // 3) timeouts：legacy 有值而 DB 缺失 → 补回
+    if (legacy.timeouts && typeof legacy.timeouts.analyze === 'number') {
+        if (result.timeouts?.analyze === undefined || result.timeouts.analyze === null) {
+            result.timeouts = { ...result.timeouts, analyze: legacy.timeouts.analyze };
+            merged = true;
+        }
+    }
+
+    return { config: result, merged };
 }
 
 /**
@@ -292,7 +405,7 @@ export async function updateAppConfig(newConfig: Partial<AppConfig>): Promise<Ap
     };
 
     // 先刷新缓存（即便持久化失败，内存配置也保持一致）
-    cachedConfig = updatedConfig;
+    setCachedConfig(updatedConfig);
     await persistConfig(updatedConfig);
     return updatedConfig;
 }
