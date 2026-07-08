@@ -61,8 +61,7 @@ describe('/api/tags', () => {
             ];
             mocks.mockPrismaErrorItem.findMany.mockResolvedValue(errorItems);
 
-            const request = new Request('http://localhost/api/tags/stats');
-            const response = await GET_STATS(request);
+            const response = await GET_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -90,8 +89,7 @@ describe('/api/tags', () => {
             ];
             mocks.mockPrismaErrorItem.findMany.mockResolvedValue(errorItems);
 
-            const request = new Request('http://localhost/api/tags/stats');
-            const response = await GET_STATS(request);
+            const response = await GET_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -108,8 +106,7 @@ describe('/api/tags', () => {
         it('应该处理空的错题列表', async () => {
             mocks.mockPrismaErrorItem.findMany.mockResolvedValue([]);
 
-            const request = new Request('http://localhost/api/tags/stats');
-            const response = await GET_STATS(request);
+            const response = await GET_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -125,8 +122,7 @@ describe('/api/tags', () => {
             ];
             mocks.mockPrismaErrorItem.findMany.mockResolvedValue(errorItems);
 
-            const request = new Request('http://localhost/api/tags/stats');
-            const response = await GET_STATS(request);
+            const response = await GET_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -143,8 +139,7 @@ describe('/api/tags', () => {
             ];
             mocks.mockPrismaErrorItem.findMany.mockResolvedValue(errorItems);
 
-            const request = new Request('http://localhost/api/tags/stats');
-            const response = await GET_STATS(request);
+            const response = await GET_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -158,8 +153,7 @@ describe('/api/tags', () => {
             ];
             mocks.mockPrismaErrorItem.findMany.mockResolvedValue(errorItems);
 
-            const request = new Request('http://localhost/api/tags/stats');
-            const response = await GET_STATS(request);
+            const response = await GET_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -172,8 +166,7 @@ describe('/api/tags', () => {
                 new Error('Database connection failed')
             );
 
-            const request = new Request('http://localhost/api/tags/stats');
-            const response = await GET_STATS(request);
+            const response = await GET_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(500);
@@ -183,8 +176,7 @@ describe('/api/tags', () => {
         it('未登录应该拒绝访问标签统计', async () => {
             mocks.mockGetServerSession.mockResolvedValueOnce(null);
 
-            const request = new Request('http://localhost/api/tags/stats');
-            const response = await GET_STATS(request);
+            const response = await GET_STATS();
 
             expect(response.status).toBe(401);
             expect(mocks.mockPrismaErrorItem.findMany).not.toHaveBeenCalled();

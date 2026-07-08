@@ -3,6 +3,7 @@
  * 测试应用配置获取和更新接口
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { AppConfig } from '@/lib/config';
 
 // Use vi.hoisted to ensure mocks are initialized before module imports
 const mocks = vi.hoisted(() => ({
@@ -29,7 +30,7 @@ const mocks = vi.hoisted(() => ({
             similar: '',
         },
     })),
-    mockUpdateAppConfig: vi.fn((config: { aiProvider?: string }) => ({
+    mockUpdateAppConfig: vi.fn((config: Partial<AppConfig>) => ({
         ...config,
         aiProvider: config.aiProvider || 'gemini',
     })),

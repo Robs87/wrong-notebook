@@ -81,7 +81,7 @@ describe('/api/stats', () => {
                 .mockResolvedValueOnce(10);
 
             const request = new Request('http://localhost/api/stats/practice');
-            const response = await GET_PRACTICE_STATS(request);
+            const response = await GET_PRACTICE_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -100,7 +100,7 @@ describe('/api/stats', () => {
             mocks.mockPrismaPracticeRecord.count.mockResolvedValue(0);
 
             const request = new Request('http://localhost/api/stats/practice');
-            const response = await GET_PRACTICE_STATS(request);
+            const response = await GET_PRACTICE_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -116,7 +116,7 @@ describe('/api/stats', () => {
                 .mockResolvedValueOnce(75);  // correct
 
             const request = new Request('http://localhost/api/stats/practice');
-            const response = await GET_PRACTICE_STATS(request);
+            const response = await GET_PRACTICE_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -131,7 +131,7 @@ describe('/api/stats', () => {
             mocks.mockPrismaPracticeRecord.count.mockResolvedValue(0);
 
             const request = new Request('http://localhost/api/stats/practice');
-            const response = await GET_PRACTICE_STATS(request);
+            const response = await GET_PRACTICE_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -143,7 +143,7 @@ describe('/api/stats', () => {
             vi.mocked(getServerSession).mockResolvedValue(null);
 
             const request = new Request('http://localhost/api/stats/practice');
-            const response = await GET_PRACTICE_STATS(request);
+            const response = await GET_PRACTICE_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(401);
@@ -157,7 +157,7 @@ describe('/api/stats', () => {
             } as never);
 
             const request = new Request('http://localhost/api/stats/practice');
-            const response = await GET_PRACTICE_STATS(request);
+            const response = await GET_PRACTICE_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(401);
@@ -170,7 +170,7 @@ describe('/api/stats', () => {
             );
 
             const request = new Request('http://localhost/api/stats/practice');
-            const response = await GET_PRACTICE_STATS(request);
+            const response = await GET_PRACTICE_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(500);
@@ -186,7 +186,7 @@ describe('/api/stats', () => {
                 method: 'DELETE',
             });
 
-            const response = await DELETE_PRACTICE_STATS(request);
+            const response = await DELETE_PRACTICE_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -201,7 +201,7 @@ describe('/api/stats', () => {
                 method: 'DELETE',
             });
 
-            const response = await DELETE_PRACTICE_STATS(request);
+            const response = await DELETE_PRACTICE_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -215,7 +215,7 @@ describe('/api/stats', () => {
                 method: 'DELETE',
             });
 
-            const response = await DELETE_PRACTICE_STATS(request);
+            const response = await DELETE_PRACTICE_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -229,7 +229,7 @@ describe('/api/stats', () => {
                 method: 'DELETE',
             });
 
-            const response = await DELETE_PRACTICE_STATS(request);
+            const response = await DELETE_PRACTICE_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(401);
@@ -245,7 +245,7 @@ describe('/api/stats', () => {
                 method: 'DELETE',
             });
 
-            const response = await DELETE_PRACTICE_STATS(request);
+            const response = await DELETE_PRACTICE_STATS();
             const data = await response.json();
 
             expect(response.status).toBe(500);
@@ -261,7 +261,7 @@ describe('/api/stats', () => {
                 method: 'DELETE',
             });
 
-            const response = await DELETE_ERROR_ITEMS(request);
+            const response = await DELETE_ERROR_ITEMS();
             const data = await response.json();
 
             expect(response.status).toBe(200);
@@ -275,7 +275,7 @@ describe('/api/stats', () => {
                 method: 'DELETE',
             });
 
-            await DELETE_ERROR_ITEMS(request);
+            await DELETE_ERROR_ITEMS();
 
             expect(mocks.mockPrismaErrorItem.deleteMany).toHaveBeenCalledWith({
                 where: { userId: 'user-123' },
@@ -289,7 +289,7 @@ describe('/api/stats', () => {
                 method: 'DELETE',
             });
 
-            const response = await DELETE_ERROR_ITEMS(request);
+            const response = await DELETE_ERROR_ITEMS();
             const data = await response.json();
 
             expect(response.status).toBe(401);
@@ -306,7 +306,7 @@ describe('/api/stats', () => {
                 method: 'DELETE',
             });
 
-            const response = await DELETE_ERROR_ITEMS(request);
+            const response = await DELETE_ERROR_ITEMS();
             const data = await response.json();
 
             expect(response.status).toBe(401);
@@ -322,7 +322,7 @@ describe('/api/stats', () => {
                 method: 'DELETE',
             });
 
-            const response = await DELETE_ERROR_ITEMS(request);
+            const response = await DELETE_ERROR_ITEMS();
             const data = await response.json();
 
             expect(response.status).toBe(500);
