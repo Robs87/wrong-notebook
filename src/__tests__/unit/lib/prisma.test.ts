@@ -19,11 +19,13 @@ vi.mock('@/lib/logger', () => ({
 
 // Mock @prisma/client：构造一个可控的 PrismaClient + Prisma 命名空间
 const mockExecuteRawUnsafe = vi.fn();
+const mockQueryRawUnsafe = vi.fn();
 
 vi.mock('@prisma/client', () => {
     return {
         PrismaClient: class MockPrismaClient {
             $executeRawUnsafe = mockExecuteRawUnsafe;
+            $queryRawUnsafe = mockQueryRawUnsafe;
         },
         Prisma: {
             PrismaClientKnownRequestError: class PrismaClientKnownRequestError extends Error {
@@ -44,11 +46,13 @@ describe('SQLite 加固 (M7)', () => {
         await import('@/lib/prisma');
         await new Promise((r) => setTimeout(r, 80));
 
-        const calls = mockExecuteRawUnsafe.mock.calls.map((c) => c[0]);
-        expect(calls).toContain('PRAGMA journal_mode=WAL');
-        expect(calls).toContain('PRAGMA busy_timeout=5000');
-        expect(calls).toContain('PRAGMA synchronous=NORMAL');
-        expect(calls).toContain('PRAGMA foreign_keys=ON');
+        // WAL 会返回结果行，必须走 $queryRawUnsafe；其余不返回行，走 $executeRawUnsafe。
+        const queryCalls = mockQueryRawUnsafe.mock.calls.map((c) => c[0]);
+        const execCalls = mockExecuteRawUnsafe.mock.calls.map((c) => c[0]);
+        expect(queryCalls).toContain('PRAGMA journal_mode=WAL');
+        expect(execCalls).toContain('PRAGMA busy_timeout=5000');
+        expect(execCalls).toContain('PRAGMA synchronous=NORMAL');
+        expect(execCalls).toContain('PRAGMA foreign_keys=ON');
     });
 
     it('withWriteRetry: 成功时直接返回，不重试', async () => {
