@@ -108,6 +108,11 @@ jobs:
         run: |
           npx prisma db push
           npx prisma db seed
+          # E2E 注册流（auth-flow.spec）需要 allowRegistration=true：默认 false 会让 /register
+          # 渲染“注册已禁用”卡片，缺少 input[name="name"] 导致测试超时。seed 后显式开启注册，
+          # 仅写非敏感开关、不含任何密钥；复用生成好的 PrismaClient，确保写入运行时读取的同一个
+          # SQLite 文件（DATABASE_URL=file:./e2e.db → prisma/e2e.db）。不改动生产逻辑。
+          node -e 'const{PrismaClient}=require("@prisma/client");const p=new PrismaClient();const v=JSON.stringify({allowRegistration:true});p.appSetting.upsert({where:{id:1},update:{value:v},create:{id:1,value:v}}).then(function(){return p.$disconnect();}).then(function(){console.log("[e2e] AppSetting allowRegistration=true seeded");}).catch(function(e){console.error(e);process.exit(1);});'
 
       - name: Build application
         run: npm run build
