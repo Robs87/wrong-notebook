@@ -28,8 +28,10 @@ const mocks = vi.hoisted(() => ({
     },
     mockSession: {
         user: {
+            id: 'user-123',
             email: 'user@example.com',
             name: 'Test User',
+            role: 'user',
         },
         expires: '2025-12-31',
     },
@@ -619,6 +621,8 @@ describe('/api/error-items', () => {
                 userId: 'user-123',
                 userNotes: '',
             };
+            // 归属校验：findUnique 返回属于当前用户的项
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({ userId: 'user-123' });
             mocks.mockPrismaErrorItem.update.mockResolvedValue({
                 ...existingItem,
                 userNotes: '这道题需要注意移项变号',
@@ -643,6 +647,7 @@ describe('/api/error-items', () => {
                 userId: 'user-123',
                 userNotes: '旧笔记内容',
             };
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({ userId: 'user-123' });
             mocks.mockPrismaErrorItem.update.mockResolvedValue({
                 ...existingItem,
                 userNotes: '',
@@ -663,6 +668,7 @@ describe('/api/error-items', () => {
 
         it('应该成功保存长笔记', async () => {
             const longNote = '这是一段很长的笔记内容。'.repeat(100);
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({ userId: 'user-123' });
             mocks.mockPrismaErrorItem.update.mockResolvedValue({
                 id: 'error-item-1',
                 userId: 'user-123',
@@ -681,8 +687,7 @@ describe('/api/error-items', () => {
         });
 
         it('应该拒绝未登录用户', async () => {
-            mocks.mockPrismaUser.findUnique.mockResolvedValue(null);
-            mocks.mockPrismaUser.findFirst.mockResolvedValue(null);
+            vi.mocked(getServerSession).mockResolvedValueOnce(null);
 
             const request = new Request('http://localhost/api/error-items/error-item-1/notes', {
                 method: 'PATCH',
@@ -697,7 +702,24 @@ describe('/api/error-items', () => {
             expect(data.message).toBeDefined();
         });
 
+        it('应该拒绝非所有者（IDOR 防护）', async () => {
+            // 项存在但属于其他用户
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({ userId: 'other-user' });
+
+            const request = new Request('http://localhost/api/error-items/error-item-1/notes', {
+                method: 'PATCH',
+                body: JSON.stringify({ userNotes: '笔记' }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await PATCH_NOTES(request, { params: Promise.resolve({ id: 'error-item-1' }) });
+
+            expect(response.status).toBe(403);
+            expect(mocks.mockPrismaErrorItem.update).not.toHaveBeenCalled();
+        });
+
         it('应该处理数据库错误', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({ userId: 'user-123' });
             mocks.mockPrismaErrorItem.update.mockRejectedValue(new Error('Database error'));
 
             const request = new Request('http://localhost/api/error-items/error-item-1/notes', {
@@ -766,7 +788,7 @@ describe('/api/error-items', () => {
         });
 
         it('应该支持不同级别的掌握程度', async () => {
-            const levels = [0, 1, 2, 3];
+            const levels = [0, 1, 2];
 
             for (const level of levels) {
                 // Mock ownership check (findUnique)
@@ -791,8 +813,21 @@ describe('/api/error-items', () => {
             }
         });
 
+        it('应该拒绝超出范围的 masteryLevel（>2）', async () => {
+            const request = new Request('http://localhost/api/error-items/error-item-1/mastery', {
+                method: 'PATCH',
+                body: JSON.stringify({ masteryLevel: 3 }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await PATCH_MASTERY(request, { params: Promise.resolve({ id: 'error-item-1' }) });
+
+            expect(response.status).toBe(400);
+            expect(mocks.mockPrismaErrorItem.update).not.toHaveBeenCalled();
+        });
+
         it('应该拒绝未登录用户', async () => {
-            mocks.mockPrismaUser.findUnique.mockResolvedValue(null);
+            vi.mocked(getServerSession).mockResolvedValueOnce(null);
 
             const request = new Request('http://localhost/api/error-items/error-item-1/mastery', {
                 method: 'PATCH',

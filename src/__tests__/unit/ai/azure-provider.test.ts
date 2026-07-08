@@ -58,6 +58,7 @@ vi.mock('jsonrepair', () => ({
 
 // Delayed import to ensure mocks are applied
 import { AzureOpenAIProvider } from '@/lib/ai/azure-provider';
+import { extractTag } from '@/lib/ai/response-parser';
 import type { ParsedQuestion } from '@/lib/ai/types';
 
 type PrivateAzureProvider = {
@@ -346,24 +347,24 @@ describe('Azure OpenAI Provider 响应解析', () => {
         });
     });
 
-    describe('extractTag', () => {
+    describe('extractTag（共享 response-parser）', () => {
         it('应该正确提取标签内容', () => {
             const text = '<test>content</test>';
-            const result = asPrivateProvider(provider).extractTag(text, 'test');
+            const result = extractTag(text, 'test');
 
             expect(result).toBe('content');
         });
 
         it('应该去除首尾空格', () => {
             const text = '<test>  content with spaces  </test>';
-            const result = asPrivateProvider(provider).extractTag(text, 'test');
+            const result = extractTag(text, 'test');
 
             expect(result).toBe('content with spaces');
         });
 
         it('标签不存在时应该返回 null', () => {
             const text = '<other>content</other>';
-            const result = asPrivateProvider(provider).extractTag(text, 'test');
+            const result = extractTag(text, 'test');
 
             expect(result).toBeNull();
         });
@@ -376,11 +377,18 @@ line 2
 line 3
 </test>
             `.trim();
-            const result = asPrivateProvider(provider).extractTag(text, 'test');
+            const result = extractTag(text, 'test');
 
             expect(result).toContain('line 1');
             expect(result).toContain('line 2');
             expect(result).toContain('line 3');
+        });
+
+        it('analysis 标签被截断（无闭合标签）时应读取到末尾', () => {
+            const text = '<analysis>这是一段因 max_tokens 被截断的解析';
+            const result = extractTag(text, 'analysis');
+
+            expect(result).toBe('这是一段因 max_tokens 被截断的解析');
         });
     });
 });

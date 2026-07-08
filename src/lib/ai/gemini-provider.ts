@@ -6,6 +6,7 @@ import { getAppConfig } from '../config';
 import { getMathTagsFromDB, getTagsFromDB } from './tag-service';
 import { createLogger } from '../logger';
 import { normalizeMistakeStatusForSave } from '../mistake-status';
+import { extractTag, parseJsonLoose } from './response-parser';
 
 const logger = createLogger('ai:gemini');
 
@@ -18,6 +19,7 @@ export class GeminiProvider implements AIService {
     private ai: GoogleGenAI;
     private modelName: string;
     private baseUrl: string;
+    private requestTimeoutMs: number;
 
     constructor(config?: AIConfig) {
         const apiKey = config?.apiKey;
@@ -27,13 +29,18 @@ export class GeminiProvider implements AIService {
             throw new Error("AI_AUTH_ERROR: GOOGLE_API_KEY is required for Gemini provider");
         }
 
+        // 读取全局超时配置，防止上游挂起导致请求无限阻塞
+        const appConfig = getAppConfig();
+        this.requestTimeoutMs = appConfig?.timeouts?.analyze || 180000;
+
         // 使用 httpOptions.baseUrl 来配置自定义 API 地址，避免全局 setDefaultBaseUrls 的竞态条件
         // 参考：@google/genai 的 GoogleGenAIOptions.httpOptions.baseUrl
         this.ai = new GoogleGenAI({
             apiKey,
             httpOptions: baseUrl ? {
-                baseUrl: baseUrl
-            } : undefined
+                baseUrl: baseUrl,
+                timeout: this.requestTimeoutMs,
+            } : { timeout: this.requestTimeoutMs },
         });
 
         this.modelName = config?.model || 'gemini-2.0-flash';
@@ -43,8 +50,18 @@ export class GeminiProvider implements AIService {
             provider: 'Gemini',
             model: this.modelName,
             baseUrl: this.baseUrl,
-            apiKeyPrefix: apiKey.substring(0, 8) + '...'
+            timeoutMs: this.requestTimeoutMs,
+            hasKey: true,
         }, 'AI Provider initialized');
+    }
+
+    /**
+     * 创建带超时的 AbortSignal，用于显式控制单次 AI 调用时长。
+     */
+    private createTimeoutSignal(): { signal: AbortSignal; timeoutId: NodeJS.Timeout } {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+        return { signal: controller.signal, timeoutId };
     }
 
     private async retryOperation<T>(operation: () => Promise<T>, maxRetries: number = 3): Promise<T> {
@@ -85,31 +102,18 @@ export class GeminiProvider implements AIService {
         throw lastError;
     }
 
-    private extractTag(text: string, tagName: string): string | null {
-        const startTag = `<${tagName}>`;
-        const endTag = `</${tagName}>`;
-        const startIndex = text.indexOf(startTag);
-        const endIndex = text.lastIndexOf(endTag);
-
-        if (startIndex === -1 || endIndex === -1 || startIndex >= endIndex) {
-            return null;
-        }
-
-        return text.substring(startIndex + startTag.length, endIndex).trim();
-    }
-
     private parseResponse(text: string): ParsedQuestion {
         logger.debug({ textLength: text.length }, 'Parsing AI response');
 
-        const questionText = this.extractTag(text, "question_text");
-        const answerText = this.extractTag(text, "answer_text");
-        const analysis = this.extractTag(text, "analysis");
-        const subjectRaw = this.extractTag(text, "subject");
-        const knowledgePointsRaw = this.extractTag(text, "knowledge_points");
-        const requiresImageRaw = this.extractTag(text, "requires_image");
-        const wrongAnswerText = this.extractTag(text, "wrong_answer_text") || "";
-        const mistakeAnalysis = this.extractTag(text, "mistake_analysis") || "";
-        const mistakeStatusRaw = this.extractTag(text, "mistake_status");
+        const questionText = extractTag(text, "question_text");
+        const answerText = extractTag(text, "answer_text");
+        const analysis = extractTag(text, "analysis");
+        const subjectRaw = extractTag(text, "subject");
+        const knowledgePointsRaw = extractTag(text, "knowledge_points");
+        const requiresImageRaw = extractTag(text, "requires_image");
+        const wrongAnswerText = extractTag(text, "wrong_answer_text") || "";
+        const mistakeAnalysis = extractTag(text, "mistake_analysis") || "";
+        const mistakeStatusRaw = extractTag(text, "mistake_status");
 
         // Basic Validation - require answer and analysis, questionText is optional
         // (reanswer template doesn't output <question_text>)
@@ -211,20 +215,24 @@ export class GeminiProvider implements AIService {
 
             logger.box('📤 API Request (发送给 AI 的原始请求)', JSON.stringify(requestParamsForLog, null, 2));
 
-            const response = await this.retryOperation(() => this.ai.models.generateContent({
-                model: this.modelName,
-                contents: [
-                    {
-                        text: prompt
-                    },
-                    {
-                        inlineData: {
-                            data: imageBase64,
-                            mimeType: mimeType
+            const response = await this.retryOperation(() => {
+                const { signal, timeoutId } = this.createTimeoutSignal();
+                return this.ai.models.generateContent({
+                    model: this.modelName,
+                    contents: [
+                        {
+                            text: prompt
+                        },
+                        {
+                            inlineData: {
+                                data: imageBase64,
+                                mimeType: mimeType
+                            }
                         }
-                    }
-                ]
-            }));
+                    ],
+                    config: { abortSignal: signal },
+                }).finally(() => clearTimeout(timeoutId));
+            });
 
             logger.box('📦 Full API Response Metadata', {
                 usageMetadata: response.usageMetadata
@@ -268,10 +276,14 @@ export class GeminiProvider implements AIService {
         logger.box('📝 Full Prompt', prompt);
 
         try {
-            const response = await this.retryOperation(() => this.ai.models.generateContent({
-                model: this.modelName,
-                contents: prompt
-            }));
+            const response = await this.retryOperation(() => {
+                const { signal, timeoutId } = this.createTimeoutSignal();
+                return this.ai.models.generateContent({
+                    model: this.modelName,
+                    contents: prompt,
+                    config: { abortSignal: signal },
+                }).finally(() => clearTimeout(timeoutId));
+            });
 
             const text = response.text || '';
 
@@ -323,10 +335,14 @@ export class GeminiProvider implements AIService {
                 contents = prompt;
             }
 
-            const response = await this.retryOperation(() => this.ai.models.generateContent({
-                model: this.modelName,
-                contents
-            }));
+            const response = await this.retryOperation(() => {
+                const { signal, timeoutId } = this.createTimeoutSignal();
+                return this.ai.models.generateContent({
+                    model: this.modelName,
+                    contents,
+                    config: { abortSignal: signal },
+                }).finally(() => clearTimeout(timeoutId));
+            });
 
             const text = response.text || '';
 
@@ -365,31 +381,21 @@ export class GeminiProvider implements AIService {
         }, 'GeoGebra Analysis Request');
 
         try {
-            const response = await this.retryOperation(() => this.ai.models.generateContent({
-                model: this.modelName,
-                contents: prompt
-            }));
+            const response = await this.retryOperation(() => {
+                const { signal, timeoutId } = this.createTimeoutSignal();
+                return this.ai.models.generateContent({
+                    model: this.modelName,
+                    contents: prompt,
+                    config: { abortSignal: signal },
+                }).finally(() => clearTimeout(timeoutId));
+            });
 
             const text = response.text || '';
             logger.debug({ rawResponse: text }, 'GeoGebra AI raw response');
 
             if (!text) throw new Error("Empty response from AI");
 
-            // Extract JSON from response (handle possible markdown code blocks)
-            let jsonStr = text.trim();
-            const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-            if (jsonMatch) {
-                jsonStr = jsonMatch[1].trim();
-            }
-
-            // Try to find JSON object
-            const objStart = jsonStr.indexOf('{');
-            const objEnd = jsonStr.lastIndexOf('}');
-            if (objStart !== -1 && objEnd !== -1) {
-                jsonStr = jsonStr.substring(objStart, objEnd + 1);
-            }
-
-            const parsed = JSON.parse(jsonStr);
+            const parsed = parseJsonLoose(text) as { suitable?: unknown; commands?: unknown; description?: string };
 
             return {
                 suitable: Boolean(parsed.suitable),

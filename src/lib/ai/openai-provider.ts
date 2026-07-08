@@ -7,6 +7,7 @@ import { safeParseParsedQuestion } from './schema';
 import { getMathTagsFromDB, getTagsFromDB } from './tag-service';
 import { createLogger } from '../logger';
 import { normalizeMistakeStatusForSave } from '../mistake-status';
+import { extractResponseText, extractTag, parseJsonLoose } from './response-parser';
 
 const logger = createLogger('ai:openai');
 
@@ -36,6 +37,7 @@ export class OpenAIProvider implements AIService {
     private baseURL: string;
     private apiKey: string;
     private isLongCat: boolean;
+    private requestTimeoutMs: number;
 
     constructor(config?: AIConfig) {
         const apiKey = config?.apiKey;
@@ -45,9 +47,16 @@ export class OpenAIProvider implements AIService {
             throw new Error("AI_AUTH_ERROR: OPENAI_API_KEY is required for OpenAI provider");
         }
 
+        // 从全局配置读取单次 AI 调用的超时上限，避免上游挂起导致请求无限阻塞
+        const appConfig = getAppConfig();
+        this.requestTimeoutMs = appConfig?.timeouts?.analyze || 180000;
+
         this.openai = new OpenAI({
             apiKey: apiKey,
             baseURL: baseURL || undefined,
+            // OpenAI SDK 的 timeout 触发后会自动 abort 底层请求
+            timeout: this.requestTimeoutMs,
+            maxRetries: 0,
             defaultHeaders: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             },
@@ -62,8 +71,19 @@ export class OpenAIProvider implements AIService {
             provider: 'OpenAI',
             model: this.model,
             baseURL: this.baseURL,
-            apiKeyPrefix: apiKey.substring(0, 8) + '...'
+            timeoutMs: this.requestTimeoutMs,
+            hasKey: true,
         }, 'AI Provider initialized');
+    }
+
+    /**
+     * 创建带超时的 AbortSignal，用于显式控制 AI 调用时长。
+     * 返回 signal 与 cleanup，调用方在 finally 中 clearTimeout 防止泄漏。
+     */
+    private createTimeoutSignal(): { signal: AbortSignal; timeoutId: NodeJS.Timeout } {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+        return { signal: controller.signal, timeoutId };
     }
 
     private adaptMessagesForLongCat(messages: OpenAIMessage[]): OpenAIMessage[] {
@@ -87,67 +107,18 @@ export class OpenAIProvider implements AIService {
         });
     }
 
-    /**
-     * 从 API 响应中提取有效文本。
-     * 部分推理模型（如 vLLM 升级后的 agnes-2.0-flash）会将结构化 XML
-     * 输出拆分到 reasoning_content 字段，而非 content。
-     * 策略：如果 content 缺少 <answer_text>，则拼接 content + reasoning_content。
-     */
-    private extractResponseText(message: unknown): string {
-        const content = isRecord(message) && typeof message.content === 'string' ? message.content : "";
-        const reasoning = isRecord(message) && typeof message.reasoning_content === 'string' ? message.reasoning_content : "";
-
-        if (!content) return reasoning;
-        if (!reasoning) return content;
-
-        // content 缺少关键标签 → 推理模型将 XML 拆到了 reasoning_content
-        if (!content.includes("<answer_text>") && reasoning.includes("<answer_text>")) {
-            logger.warn('content 缺少 <answer_text>，检测到 reasoning_content 拆分，合并两个字段');
-            return reasoning + "\n" + content;
-        }
-
-        return content;
-    }
-
-    private extractTag(text: string, tagName: string): string | null {
-        const startTag = `<${tagName}>`;
-        const endTag = `</${tagName}>`;
-        const startIndex = text.indexOf(startTag);
-
-        // 如果找不到开始标签，返回 null
-        if (startIndex === -1) {
-            return null;
-        }
-
-        const contentStartIndex = startIndex + startTag.length;
-        const endIndex = text.lastIndexOf(endTag);
-
-        // 特殊处理：如果闭合标签丢失（通常主要发生在最后的 analysis 标签被截断时）
-        // 我们尝试读取到字符串末尾
-        if (endIndex === -1 && tagName === 'analysis') {
-            logger.warn({ tagName }, 'Tag was verified unclosed, treating as truncated and reading to end');
-            return text.substring(contentStartIndex).trim();
-        }
-
-        if (endIndex === -1 || contentStartIndex >= endIndex) {
-            return null;
-        }
-
-        return text.substring(contentStartIndex, endIndex).trim();
-    }
-
     private parseResponse(text: string): ParsedQuestion {
         logger.debug({ textLength: text.length }, 'Parsing AI response');
 
-        const questionText = this.extractTag(text, "question_text");
-        const answerText = this.extractTag(text, "answer_text");
-        const analysis = this.extractTag(text, "analysis");
-        const subjectRaw = this.extractTag(text, "subject");
-        const knowledgePointsRaw = this.extractTag(text, "knowledge_points");
-        const requiresImageRaw = this.extractTag(text, "requires_image");
-        const wrongAnswerText = this.extractTag(text, "wrong_answer_text") || "";
-        const mistakeAnalysis = this.extractTag(text, "mistake_analysis") || "";
-        const mistakeStatusRaw = this.extractTag(text, "mistake_status");
+        const questionText = extractTag(text, "question_text");
+        const answerText = extractTag(text, "answer_text");
+        const analysis = extractTag(text, "analysis");
+        const subjectRaw = extractTag(text, "subject");
+        const knowledgePointsRaw = extractTag(text, "knowledge_points");
+        const requiresImageRaw = extractTag(text, "requires_image");
+        const wrongAnswerText = extractTag(text, "wrong_answer_text") || "";
+        const mistakeAnalysis = extractTag(text, "mistake_analysis") || "";
+        const mistakeStatusRaw = extractTag(text, "mistake_status");
 
         // Basic Validation
         // Basic Validation - require answer and analysis, questionText is optional
@@ -279,27 +250,33 @@ export class OpenAIProvider implements AIService {
                     },
                 ]);
 
-                const res = await fetch(`${this.baseURL}/chat/completions`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${this.apiKey}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        model: this.model,
-                        messages,
-                        max_tokens: 8192,
-                        ...getDisableThinkingBody(),
-                    }),
-                });
+                const { signal: longcatSignal, timeoutId: longcatTimeoutId } = this.createTimeoutSignal();
+                try {
+                    const res = await fetch(`${this.baseURL}/chat/completions`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${this.apiKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        signal: longcatSignal,
+                        body: JSON.stringify({
+                            model: this.model,
+                            messages,
+                            max_tokens: 8192,
+                            ...getDisableThinkingBody(),
+                        }),
+                    });
 
-                if (!res.ok) {
-                    const errBody = await res.text();
-                    logger.error({ status: res.status, body: errBody }, 'LongCat API error');
-                    throw new Error(`${res.status} status code (${errBody})`);
+                    if (!res.ok) {
+                        const errBody = await res.text();
+                        logger.error({ status: res.status, body: errBody }, 'LongCat API error');
+                        throw new Error(`${res.status} status code (${errBody})`);
+                    }
+
+                    response = await res.json();
+                } finally {
+                    clearTimeout(longcatTimeoutId);
                 }
-
-                response = await res.json();
             } else {
                 const params: ChatCompletionCreateParamsNonStreaming = {
                     model: this.model,
@@ -335,7 +312,7 @@ export class OpenAIProvider implements AIService {
                 throw new Error("AI_RESPONSE_ERROR: API returned empty or invalid response");
             }
 
-            const text = this.extractResponseText(response.choices[0]?.message);
+            const text = extractResponseText(response.choices[0]?.message);
 
             logger.box('🤖 AI Raw Response', text);
 
@@ -388,7 +365,7 @@ export class OpenAIProvider implements AIService {
             };
             const response = await this.openai.chat.completions.create(params);
 
-            const text = this.extractResponseText(response.choices[0]?.message);
+            const text = extractResponseText(response.choices[0]?.message);
 
             logger.box('🤖 AI Raw Response', text);
 
@@ -470,7 +447,7 @@ export class OpenAIProvider implements AIService {
                 throw new Error("AI_RESPONSE_ERROR: API returned empty or invalid response");
             }
 
-            const text = this.extractResponseText(response.choices[0]?.message);
+            const text = extractResponseText(response.choices[0]?.message);
 
             logger.debug({ rawResponse: text }, 'AI raw response');
 
@@ -518,26 +495,12 @@ export class OpenAIProvider implements AIService {
             };
             const response = await this.openai.chat.completions.create(params);
 
-            const text = this.extractResponseText(response.choices[0]?.message);
+            const text = extractResponseText(response.choices[0]?.message);
             logger.debug({ rawResponse: text }, 'GeoGebra AI raw response');
 
             if (!text) throw new Error("Empty response from AI");
 
-            // Extract JSON from response (handle possible markdown code blocks)
-            let jsonStr = text.trim();
-            const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-            if (jsonMatch) {
-                jsonStr = jsonMatch[1].trim();
-            }
-
-            // Try to find JSON object
-            const objStart = jsonStr.indexOf('{');
-            const objEnd = jsonStr.lastIndexOf('}');
-            if (objStart !== -1 && objEnd !== -1) {
-                jsonStr = jsonStr.substring(objStart, objEnd + 1);
-            }
-
-            const parsed = JSON.parse(jsonStr);
+            const parsed = parseJsonLoose(text) as { suitable?: unknown; commands?: unknown; description?: string };
 
             return {
                 suitable: Boolean(parsed.suitable),

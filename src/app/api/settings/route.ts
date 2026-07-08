@@ -99,7 +99,7 @@ export async function POST(req: Request) {
             body.azure.apiKey = currentConfig.azure?.apiKey;
         }
 
-        const updatedConfig = updateAppConfig(body);
+        const updatedConfig = await updateAppConfig(body);
         return NextResponse.json(sanitizeConfig(updatedConfig, true));
     } catch (error) {
         logger.error({ error }, 'Failed to update settings');

@@ -5,6 +5,7 @@ import { OpenAIProvider } from '@/lib/ai/openai-provider';
 import { GeminiProvider } from '@/lib/ai/gemini-provider';
 import { AzureOpenAIProvider } from '@/lib/ai/azure-provider';
 import { createLogger } from '@/lib/logger';
+import { assertSafeBaseUrl, DEFAULT_ALLOWED_HOSTS } from '@/lib/url-safety';
 
 const logger = createLogger('api:ai:test');
 
@@ -107,6 +108,19 @@ export async function POST(request: NextRequest) {
 
         if (!provider || !apiKey) {
             return NextResponse.json({ error: 'Missing provider or apiKey' }, { status: 400 });
+        }
+
+        // SSRF 防护：对用户提供的 baseUrl/endpoint 做主机白名单 + 私网解析校验
+        const targetUrl = provider === 'azure' ? endpoint : baseUrl;
+        if (targetUrl) {
+            const safe = await assertSafeBaseUrl(targetUrl, DEFAULT_ALLOWED_HOSTS);
+            if (!safe.ok) {
+                logger.warn({ reason: safe.error, provider }, 'Blocked unsafe target URL');
+                return NextResponse.json(
+                    { error: 'Blocked: target URL points to a private or disallowed host' },
+                    { status: 400 }
+                );
+            }
         }
 
         logger.info({ provider, model, baseUrl: baseUrl || endpoint }, 'AI 连接测试开始');
@@ -246,7 +260,7 @@ export async function POST(request: NextRequest) {
     } catch (error) {
         logger.error({ error }, 'AI 测试 API 异常');
         return NextResponse.json(
-            { error: error instanceof Error ? error.message : 'Internal server error' },
+            { error: 'Internal server error' },
             { status: 500 }
         );
     }

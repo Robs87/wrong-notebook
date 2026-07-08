@@ -6,6 +6,7 @@ import { safeParseParsedQuestion } from './schema';
 import { getMathTagsFromDB, getTagsFromDB } from './tag-service';
 import { createLogger } from '../logger';
 import { normalizeMistakeStatusForSave } from '../mistake-status';
+import { extractResponseText, extractTag, parseJsonLoose } from './response-parser';
 
 const logger = createLogger('ai:azure');
 
@@ -28,6 +29,7 @@ export class AzureOpenAIProvider implements AIService {
     private model: string;
     private deployment: string;
     private endpoint: string;
+    private requestTimeoutMs: number;
 
     constructor(config?: AzureConfig) {
         const apiKey = config?.apiKey;
@@ -46,11 +48,17 @@ export class AzureOpenAIProvider implements AIService {
             throw new Error("AI_AUTH_ERROR: AZURE_OPENAI_DEPLOYMENT is required for Azure OpenAI provider");
         }
 
+        // 读取全局超时配置，防止上游挂起导致请求无限阻塞
+        const appConfig = getAppConfig();
+        this.requestTimeoutMs = appConfig?.timeouts?.analyze || 180000;
+
         this.client = new AzureOpenAI({
             apiKey: apiKey,
             endpoint: endpoint,
             deployment: deployment,
             apiVersion: config?.apiVersion || '2024-02-15-preview',
+            timeout: this.requestTimeoutMs,
+            maxRetries: 0,
         });
 
         this.model = config?.model || deployment;
@@ -62,35 +70,23 @@ export class AzureOpenAIProvider implements AIService {
             model: this.model,
             deployment: this.deployment,
             endpoint: endpoint,
-            apiKeyPrefix: apiKey.substring(0, 8) + '...'
+            timeoutMs: this.requestTimeoutMs,
+            hasKey: true,
         }, 'Azure AI Provider initialized');
-    }
-
-    private extractTag(text: string, tagName: string): string | null {
-        const startTag = `<${tagName}>`;
-        const endTag = `</${tagName}>`;
-        const startIndex = text.indexOf(startTag);
-        const endIndex = text.lastIndexOf(endTag);
-
-        if (startIndex === -1 || endIndex === -1 || startIndex >= endIndex) {
-            return null;
-        }
-
-        return text.substring(startIndex + startTag.length, endIndex).trim();
     }
 
     private parseResponse(text: string): ParsedQuestion {
         logger.debug({ textLength: text.length }, 'Parsing AI response');
 
-        const questionText = this.extractTag(text, "question_text");
-        const answerText = this.extractTag(text, "answer_text");
-        const analysis = this.extractTag(text, "analysis");
-        const subjectRaw = this.extractTag(text, "subject");
-        const knowledgePointsRaw = this.extractTag(text, "knowledge_points");
-        const requiresImageRaw = this.extractTag(text, "requires_image");
-        const wrongAnswerText = this.extractTag(text, "wrong_answer_text") || "";
-        const mistakeAnalysis = this.extractTag(text, "mistake_analysis") || "";
-        const mistakeStatusRaw = this.extractTag(text, "mistake_status");
+        const questionText = extractTag(text, "question_text");
+        const answerText = extractTag(text, "answer_text");
+        const analysis = extractTag(text, "analysis");
+        const subjectRaw = extractTag(text, "subject");
+        const knowledgePointsRaw = extractTag(text, "knowledge_points");
+        const requiresImageRaw = extractTag(text, "requires_image");
+        const wrongAnswerText = extractTag(text, "wrong_answer_text") || "";
+        const mistakeAnalysis = extractTag(text, "mistake_analysis") || "";
+        const mistakeStatusRaw = extractTag(text, "mistake_status");
 
         // Basic Validation - require answer and analysis, questionText is optional
         // (reanswer template doesn't output <question_text>)
@@ -213,7 +209,7 @@ export class AzureOpenAIProvider implements AIService {
                 throw new Error("AI_RESPONSE_ERROR: API returned empty or invalid response");
             }
 
-            const text = response.choices[0]?.message?.content || "";
+            const text = extractResponseText(response.choices[0]?.message);
 
             logger.box('🤖 AI Raw Response', text);
 
@@ -280,7 +276,7 @@ Knowledge Points: ${knowledgePoints.join(", ")}
                 max_tokens: 8192,
             });
 
-            const text = response.choices[0]?.message?.content || "";
+            const text = extractResponseText(response.choices[0]?.message);
 
             logger.box('🤖 AI Raw Response', text);
 
@@ -355,7 +351,7 @@ Knowledge Points: ${knowledgePoints.join(", ")}
                 throw new Error("AI_RESPONSE_ERROR: API returned empty or invalid response");
             }
 
-            const text = response.choices[0]?.message?.content || "";
+            const text = extractResponseText(response.choices[0]?.message);
 
             logger.debug({ rawResponse: text }, 'AI raw response');
 
@@ -402,26 +398,12 @@ Knowledge Points: ${knowledgePoints.join(", ")}
                 max_tokens: 4096,
             });
 
-            const text = response.choices[0]?.message?.content || '';
+            const text = extractResponseText(response.choices[0]?.message);
             logger.debug({ rawResponse: text }, 'GeoGebra AI raw response');
 
             if (!text) throw new Error("Empty response from AI");
 
-            // Extract JSON from response (handle possible markdown code blocks)
-            let jsonStr = text.trim();
-            const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-            if (jsonMatch) {
-                jsonStr = jsonMatch[1].trim();
-            }
-
-            // Try to find JSON object
-            const objStart = jsonStr.indexOf('{');
-            const objEnd = jsonStr.lastIndexOf('}');
-            if (objStart !== -1 && objEnd !== -1) {
-                jsonStr = jsonStr.substring(objStart, objEnd + 1);
-            }
-
-            const parsed = JSON.parse(jsonStr);
+            const parsed = parseJsonLoose(text) as { suitable?: unknown; commands?: unknown; description?: string };
 
             return {
                 suitable: Boolean(parsed.suitable),

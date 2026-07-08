@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
-import { getErrorMessage } from '@/lib/error-utils';
+import { assertSafeBaseUrl, DEFAULT_ALLOWED_HOSTS } from '@/lib/url-safety';
 
 const logger = createLogger('api:ai:models');
 
@@ -23,15 +23,19 @@ function extractModelName(modelId: string): string {
 }
 
 async function fetchGeminiModels(apiKey: string, baseUrl: string): Promise<ModelInfo[]> {
-    const url = `${baseUrl}/v1beta/models?key=${apiKey}`;
+    // baseUrl 已经过 assertSafeBaseUrl 校验为安全 origin，此处安全拼接
+    const url = `${baseUrl}/v1beta/models`;
 
     const response = await fetch(url, {
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Content-Type': 'application/json',
+            // Gemini 的 key 通过 header 传递，避免出现在 URL/日志里
+            'x-goog-api-key': apiKey,
+        },
     });
 
     if (!response.ok) {
-        const errorText = await response.text();
-        logger.error({ status: response.status, errorText }, 'Gemini models API error');
+        logger.error({ status: response.status }, 'Gemini models API error');
         throw new Error(`Gemini API error: ${response.status}`);
     }
 
@@ -50,6 +54,7 @@ async function fetchGeminiModels(apiKey: string, baseUrl: string): Promise<Model
 }
 
 async function fetchOpenAIModels(apiKey: string, baseUrl: string): Promise<ModelInfo[]> {
+    // baseUrl 已经过 assertSafeBaseUrl 校验
     const url = `${baseUrl}/models`;
 
     const response = await fetch(url, {
@@ -60,7 +65,7 @@ async function fetchOpenAIModels(apiKey: string, baseUrl: string): Promise<Model
     });
 
     if (!response.ok) {
-        logger.error({ statusText: response.statusText }, 'OpenAI models API error');
+        logger.error({ status: response.status }, 'OpenAI models API error');
         throw new Error(`API error: ${response.status}`);
     }
 
@@ -76,7 +81,7 @@ async function fetchOpenAIModels(apiKey: string, baseUrl: string): Promise<Model
         }));
 }
 
-export async function GET(req: NextRequest) {
+export async function POST(request: NextRequest) {
     try {
         const session = await getServerSession(authOptions);
         if (!session?.user) {
@@ -86,10 +91,10 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
         }
 
-        const { searchParams } = new URL(req.url);
-        const provider = searchParams.get('provider');
-        const apiKey = searchParams.get('apiKey');
-        const baseUrl = searchParams.get('baseUrl');
+        const body = await request.json().catch(() => null);
+        const provider = typeof body?.provider === 'string' ? body.provider : null;
+        const apiKey = typeof body?.apiKey === 'string' ? body.apiKey : null;
+        const baseUrlRaw = typeof body?.baseUrl === 'string' ? body.baseUrl : null;
 
         if (!apiKey) {
             return NextResponse.json(
@@ -98,24 +103,40 @@ export async function GET(req: NextRequest) {
             );
         }
 
-        let models: ModelInfo[] = [];
-
+        let effectiveBaseUrl: string;
         if (provider === 'gemini') {
-            const effectiveBaseUrl = baseUrl || 'https://generativelanguage.googleapis.com';
-            models = await fetchGeminiModels(apiKey, effectiveBaseUrl);
+            effectiveBaseUrl = baseUrlRaw || 'https://generativelanguage.googleapis.com';
         } else {
             // OpenAI-compatible
-            const effectiveBaseUrl = baseUrl || 'https://api.openai.com/v1';
-            models = await fetchOpenAIModels(apiKey, effectiveBaseUrl);
+            effectiveBaseUrl = baseUrlRaw || 'https://api.openai.com/v1';
+        }
+
+        // SSRF 防护：仅信任服务端硬编码的官方主机白名单，不接受请求体里的 allowedHosts，
+        // 防止 admin 通过 body 注入私网地址绕过校验。私网地址无条件拒绝。
+        const safe = await assertSafeBaseUrl(effectiveBaseUrl, DEFAULT_ALLOWED_HOSTS);
+        if (!safe.ok) {
+            logger.warn({ reason: safe.error }, 'Blocked unsafe base URL');
+            return NextResponse.json(
+                { error: 'Blocked: base URL points to a private or disallowed host', models: [] },
+                { status: 400 }
+            );
+        }
+
+        let models: ModelInfo[] = [];
+        if (provider === 'gemini') {
+            models = await fetchGeminiModels(apiKey, safe.origin!);
+        } else {
+            models = await fetchOpenAIModels(apiKey, safe.origin!);
         }
 
         return NextResponse.json({ models });
 
     } catch (error) {
-        logger.error({ error }, 'Error fetching models');
+        logger.error({ error: error instanceof Error ? error.message : 'unknown' }, 'Error fetching models');
+        // 返回 200 + 空 models 让前端可手动输入，但不泄漏原始错误细节
         return NextResponse.json(
-            { error: getErrorMessage(error, 'Internal server error'), models: [] },
-            { status: 200 } // Return 200 with empty models to allow manual input
+            { error: 'Failed to fetch models', models: [] },
+            { status: 200 }
         );
     }
 }

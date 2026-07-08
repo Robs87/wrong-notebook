@@ -48,13 +48,11 @@ export function ModelSelector({ provider, apiKey, baseUrl, currentModel, onModel
         setError(null);
 
         try {
-            const params = new URLSearchParams({
-                provider,
-                apiKey,
-                ...(baseUrl && { baseUrl }),
-            });
-
-            const data = await apiClient.get<ModelsResponse>(`/api/ai/models?${params}`);
+            // API Key 通过 POST body 传输，避免出现在 URL / 日志 / Referer 中
+            const data = await apiClient.post<ModelsResponse, { provider: string; apiKey: string; baseUrl?: string }>(
+                '/api/ai/models',
+                { provider, apiKey, ...(baseUrl && { baseUrl }) }
+            );
 
             // Check if there's an error message in the response
             if ('error' in data && typeof data.error === 'string') {

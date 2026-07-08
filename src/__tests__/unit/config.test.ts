@@ -1,32 +1,53 @@
 /**
- * 应用配置模块单元测试
- * 测试 getAppConfig 和 updateAppConfig 函数
- * 注意：这些测试 mock 了文件系统操作
+ * 应用配置模块单元测试（M5 数据库存储版）
+ * 测试 getAppConfig / loadConfigFromDB / updateAppConfig / 密钥加密往返
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import fs from 'fs';
 
-// Mock fs module
-vi.mock('fs', () => ({
-    default: {
-        existsSync: vi.fn(),
-        readFileSync: vi.fn(),
-        writeFileSync: vi.fn(),
-    },
-    existsSync: vi.fn(),
-    readFileSync: vi.fn(),
-    writeFileSync: vi.fn(),
+// Mock logger
+vi.mock('@/lib/logger', () => ({
+    createLogger: vi.fn(() => ({
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        box: vi.fn(),
+        divider: vi.fn(),
+    })),
 }));
 
-// Store original env
+// Mock crypto-utils：透传加解密（用真实实现验证往返，但隔离 NEXTAUTH_SECRET 依赖）
+vi.mock('@/lib/crypto-utils', async () => {
+    const actual = await vi.importActual<typeof import('@/lib/crypto-utils')>('@/lib/crypto-utils');
+    return actual;
+});
+
+// Mock prisma：可控的 appSetting 表
+const mockAppSetting = {
+    findUnique: vi.fn(),
+    upsert: vi.fn(),
+};
+const mockWithWriteRetry = vi.fn(async (fn: () => Promise<unknown>) => fn());
+
+vi.mock('@/lib/prisma', () => ({
+    prisma: { appSetting: mockAppSetting },
+    withWriteRetry: mockWithWriteRetry,
+}));
+
+// 存储原始 env
 const originalEnv = { ...process.env };
 
-describe('config module', () => {
+describe('config module (M5 DB-backed)', () => {
+    let getAppConfig: typeof import('@/lib/config').getAppConfig;
+    let loadConfigFromDB: typeof import('@/lib/config').loadConfigFromDB;
+    let updateAppConfig: typeof import('@/lib/config').updateAppConfig;
+    let getActiveOpenAIConfig: typeof import('@/lib/config').getActiveOpenAIConfig;
+
     beforeEach(() => {
         vi.clearAllMocks();
-        // Reset environment variables
-        process.env = { ...originalEnv };
-        // Clear module cache to re-import with fresh state
+        process.env = { ...originalEnv, NEXTAUTH_SECRET: 'test-secret-for-encryption-32b!' };
+        mockAppSetting.findUnique.mockResolvedValue(null);
+        mockAppSetting.upsert.mockResolvedValue({});
         vi.resetModules();
     });
 
@@ -34,172 +55,140 @@ describe('config module', () => {
         process.env = originalEnv;
     });
 
+    async function importFresh() {
+        const mod = await import('@/lib/config');
+        getAppConfig = mod.getAppConfig;
+        loadConfigFromDB = mod.loadConfigFromDB;
+        updateAppConfig = mod.updateAppConfig;
+        getActiveOpenAIConfig = mod.getActiveOpenAIConfig;
+    }
+
     describe('getAppConfig', () => {
-        it('应该返回默认配置（文件不存在时）', async () => {
-            vi.mocked(fs.existsSync).mockReturnValue(false);
-
-            const { getAppConfig } = await import('@/lib/config');
+        it('缓存未加载时返回 env 种子默认值', async () => {
+            await importFresh();
             const config = getAppConfig();
-
-            expect(config.aiProvider).toBe('gemini'); // 默认值
-            expect(config.allowRegistration).toBe(true);
+            expect(config.aiProvider).toBe('gemini');
+            expect(config.allowRegistration).toBe(false);
+            expect(config.timeouts?.analyze).toBe(180000);
         });
 
-        it('应该从环境变量读取 AI Provider', async () => {
-            vi.mocked(fs.existsSync).mockReturnValue(false);
-            process.env.AI_PROVIDER = 'openai';
-
-            const { getAppConfig } = await import('@/lib/config');
+        it('loadConfigFromDB 后缓存被填充', async () => {
+            await importFresh();
+            await loadConfigFromDB();
             const config = getAppConfig();
-
-            expect(config.aiProvider).toBe('openai');
+            // DB 为空 + 无旧文件 → 默认配置持久化
+            expect(config.aiProvider).toBe('gemini');
+            // 应调用 upsert 持久化
+            expect(mockWithWriteRetry).toHaveBeenCalled();
         });
 
-        it('应该从环境变量读取 API Keys', async () => {
-            vi.mocked(fs.existsSync).mockReturnValue(false);
-            process.env.OPENAI_API_KEY = 'sk-env-key';
-            process.env.GOOGLE_API_KEY = 'AIza-env-key';
-
-            const { getAppConfig } = await import('@/lib/config');
-            const config = getAppConfig();
-
-            // OpenAI 现在使用多实例格式
-            expect(config.openai?.instances?.[0]?.apiKey).toBe('sk-env-key');
-            expect(config.gemini?.apiKey).toBe('AIza-env-key');
-        });
-
-        it('应该从配置文件读取并与默认值合并', async () => {
-            // 新格式的配置文件
-            const fileConfig = {
+        it('DB 有配置行时解密并缓存', async () => {
+            // 先用真实加密构造一行
+            const { encryptSecret } = await import('@/lib/crypto-utils');
+            const storedConfig = {
                 aiProvider: 'openai',
-                openai: {
-                    instances: [{
-                        id: 'test-instance',
-                        name: 'Test',
-                        apiKey: 'sk-file-key',
-                        baseUrl: 'https://api.openai.com/v1',
-                        model: 'gpt-4o',
-                    }],
-                    activeInstanceId: 'test-instance',
-                },
+                allowRegistration: true,
+                gemini: { apiKey: encryptSecret('secret-gemini-key'), baseUrl: '', model: 'g' },
+                azure: { apiKey: '', endpoint: '', deploymentName: '', apiVersion: '', model: '' },
+                openai: { instances: [{ id: 'i1', name: 'n', apiKey: encryptSecret('sk-openai'), baseUrl: 'b', model: 'm' }], activeInstanceId: 'i1' },
             };
-            vi.mocked(fs.existsSync).mockReturnValue(true);
-            vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(fileConfig));
+            mockAppSetting.findUnique.mockResolvedValue({ id: 1, value: JSON.stringify(storedConfig) });
 
-            const { getAppConfig } = await import('@/lib/config');
+            await importFresh();
+            await loadConfigFromDB();
             const config = getAppConfig();
 
             expect(config.aiProvider).toBe('openai');
-            expect(config.openai?.instances?.[0]?.apiKey).toBe('sk-file-key');
-            // 其他默认值应该保留
             expect(config.allowRegistration).toBe(true);
-            expect(config.gemini).toBeDefined();
-        });
-
-        it('应该在配置文件解析失败时返回默认值', async () => {
-            vi.mocked(fs.existsSync).mockReturnValue(true);
-            vi.mocked(fs.readFileSync).mockReturnValue('invalid json{');
-
-            const { getAppConfig } = await import('@/lib/config');
-            const config = getAppConfig();
-
-            // 应该回退到默认配置
-            expect(config.aiProvider).toBeDefined();
-        });
-
-        it('应该使用环境变量的模型名称', async () => {
-            vi.mocked(fs.existsSync).mockReturnValue(false);
-            process.env.OPENAI_API_KEY = 'sk-test';
-            process.env.OPENAI_MODEL = 'gpt-4-turbo';
-            process.env.GEMINI_MODEL = 'gemini-3.0';
-
-            const { getAppConfig } = await import('@/lib/config');
-            const config = getAppConfig();
-
-            expect(config.openai?.instances?.[0]?.model).toBe('gpt-4-turbo');
-            expect(config.gemini?.model).toBe('gemini-3.0');
-        });
-
-        it('应该使用默认模型名称（无环境变量时）', async () => {
-            vi.mocked(fs.existsSync).mockReturnValue(false);
-            process.env.OPENAI_API_KEY = 'sk-test';
-            delete process.env.OPENAI_MODEL;
-            delete process.env.GEMINI_MODEL;
-
-            const { getAppConfig } = await import('@/lib/config');
-            const config = getAppConfig();
-
-            expect(config.openai?.instances?.[0]?.model).toBe('gpt-4o');
-            expect(config.gemini?.model).toBe('gemini-2.5-flash');
+            // 密钥应被解密回明文
+            expect(config.gemini?.apiKey).toBe('secret-gemini-key');
+            expect(config.openai?.instances?.[0].apiKey).toBe('sk-openai');
         });
     });
 
     describe('updateAppConfig', () => {
-        it('应该成功写入配置文件', async () => {
-            vi.mocked(fs.existsSync).mockReturnValue(false);
-            vi.mocked(fs.writeFileSync).mockImplementation(() => { });
+        it('合并新配置并刷新缓存 + 加密持久化', async () => {
+            await importFresh();
+            await loadConfigFromDB();
 
-            const { updateAppConfig } = await import('@/lib/config');
-            const result = updateAppConfig({ aiProvider: 'openai' });
-
-            expect(fs.writeFileSync).toHaveBeenCalled();
-            expect(result.aiProvider).toBe('openai');
+            const updated = await updateAppConfig({ aiProvider: 'azure', allowRegistration: true });
+            expect(updated.aiProvider).toBe('azure');
+            expect(updated.allowRegistration).toBe(true);
+            // 内存缓存已刷新
+            expect(getAppConfig().aiProvider).toBe('azure');
+            // 持久化被调用
+            expect(mockWithWriteRetry).toHaveBeenCalled();
+            const upsertArg = mockWithWriteRetry.mock.calls.at(-1)?.[0];
+            expect(typeof upsertArg).toBe('function');
         });
 
-        it('应该合并嵌套配置', async () => {
-            vi.mocked(fs.existsSync).mockReturnValue(false);
-            vi.mocked(fs.writeFileSync).mockImplementation(() => { });
+        it('持久化时密钥应被加密', async () => {
+            const { isEncrypted } = await import('@/lib/crypto-utils');
+            await importFresh();
+            await loadConfigFromDB();
 
-            const { updateAppConfig } = await import('@/lib/config');
-            const result = updateAppConfig({
+            await updateAppConfig({
+                gemini: { apiKey: 'plain-key-123', baseUrl: '', model: 'm' },
+            });
+
+            // 捕获写入 DB 的 value
+            const upsertFn = mockWithWriteRetry.mock.calls.at(-1)?.[0] as (() => Promise<unknown>) | undefined;
+            expect(upsertFn).toBeDefined();
+            // mockAppSetting.upsert 被调用，检查 value 里的密钥已加密
+            const upsertCall = mockAppSetting.upsert.mock.calls.at(-1)?.[0] as { update?: { value?: string } } | undefined;
+            const storedValue = upsertCall?.update?.value;
+            expect(storedValue).toBeDefined();
+            const parsed = JSON.parse(storedValue as string);
+            expect(isEncrypted(parsed.gemini.apiKey)).toBe(true);
+            expect(parsed.gemini.apiKey).not.toBe('plain-key-123');
+        });
+    });
+
+    describe('密钥加密往返', () => {
+        it('encrypt → decrypt 还原明文', async () => {
+            const { encryptSecret, decryptSecret } = await import('@/lib/crypto-utils');
+            const ct = encryptSecret('my-api-key-xyz');
+            expect(ct).not.toBe('my-api-key-xyz');
+            expect(decryptSecret(ct)).toBe('my-api-key-xyz');
+        });
+
+        it('空值不加密', async () => {
+            const { encryptSecret } = await import('@/lib/crypto-utils');
+            expect(encryptSecret('')).toBe('');
+        });
+
+        it('解密失败返回空（fail-soft）', async () => {
+            const { decryptSecret } = await import('@/lib/crypto-utils');
+            expect(decryptSecret('enc:v1:invalid:data:here')).toBe('');
+        });
+
+        it('明文/旧数据原样返回（向后兼容）', async () => {
+            const { decryptSecret } = await import('@/lib/crypto-utils');
+            expect(decryptSecret('legacy-plaintext-key')).toBe('legacy-plaintext-key');
+            expect(decryptSecret('')).toBe('');
+        });
+    });
+
+    describe('getActiveOpenAIConfig', () => {
+        it('返回 activeInstanceId 对应的实例', async () => {
+            const { encryptSecret } = await import('@/lib/crypto-utils');
+            const storedConfig = {
+                aiProvider: 'openai',
                 openai: {
-                    instances: [{
-                        id: 'new-instance',
-                        name: 'New',
-                        apiKey: 'new-key',
-                        baseUrl: 'https://api.openai.com/v1',
-                        model: 'gpt-4o',
-                    }],
-                    activeInstanceId: 'new-instance',
+                    instances: [
+                        { id: 'i1', name: 'A', apiKey: encryptSecret('k1'), baseUrl: '', model: '' },
+                        { id: 'i2', name: 'B', apiKey: encryptSecret('k2'), baseUrl: '', model: '' },
+                    ],
+                    activeInstanceId: 'i2',
                 },
-            });
+            };
+            mockAppSetting.findUnique.mockResolvedValue({ id: 1, value: JSON.stringify(storedConfig) });
+            await importFresh();
+            await loadConfigFromDB();
 
-            expect(result.openai?.instances?.[0]?.apiKey).toBe('new-key');
-            // 实例应该存在
-            expect(result.openai?.instances?.length).toBeGreaterThan(0);
-        });
-
-        it('应该在写入失败时抛出错误', async () => {
-            vi.mocked(fs.existsSync).mockReturnValue(false);
-            vi.mocked(fs.writeFileSync).mockImplementation(() => {
-                throw new Error('Permission denied');
-            });
-
-            const { updateAppConfig } = await import('@/lib/config');
-
-            expect(() => updateAppConfig({ aiProvider: 'openai' })).toThrow();
-        });
-
-        it('应该更新提示词配置', async () => {
-            vi.mocked(fs.existsSync).mockReturnValue(false);
-            vi.mocked(fs.writeFileSync).mockImplementation(() => { });
-
-            const { updateAppConfig } = await import('@/lib/config');
-            const result = updateAppConfig({
-                prompts: { analyze: '自定义提示词' },
-            });
-
-            expect(result.prompts?.analyze).toBe('自定义提示词');
-        });
-
-        it('应该更新注册开关', async () => {
-            vi.mocked(fs.existsSync).mockReturnValue(false);
-            vi.mocked(fs.writeFileSync).mockImplementation(() => { });
-
-            const { updateAppConfig } = await import('@/lib/config');
-            const result = updateAppConfig({ allowRegistration: false });
-
-            expect(result.allowRegistration).toBe(false);
+            const active = getActiveOpenAIConfig();
+            expect(active?.id).toBe('i2');
+            expect(active?.name).toBe('B');
         });
     });
 });

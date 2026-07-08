@@ -317,9 +317,22 @@ export function SettingsDialog() {
             return;
         }
 
+        // 二次认证：要求输入当前管理员口令，防止仅凭已登录 token 即可一键清库
+        const password = prompt(t.settings?.systemResetPasswordPrompt || "Enter your admin password to confirm system reset:", "");
+        if (password === null) {
+            return;
+        }
+        if (!password) {
+            alert(t.settings?.systemResetPasswordRequired || "Password is required");
+            return;
+        }
+
         setSystemResetting(true);
         try {
-            await apiClient.post("/api/admin/system-reset", {});
+            await apiClient.post("/api/admin/system-reset", {
+                password,
+                confirm: "RESET ALL DATA",
+            });
             alert(t.settings?.clearSuccess || "Success - System Reset Complete");
             setOpen(false);
             window.location.reload();
