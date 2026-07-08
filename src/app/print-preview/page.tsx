@@ -34,6 +34,8 @@ function PrintPreviewContent() {
             const params = new URLSearchParams(searchParams.toString());
             // 打印预览需要所有符合条件的数据，设置较大的 pageSize
             params.set("pageSize", String(PRINT_PREVIEW_PAGE_SIZE));
+            // 打印预览需要渲染原图，显式索取（list 默认剥离以节省带宽）
+            params.set("includeImage", "true");
             const response = await apiClient.get<PaginatedResponse<ErrorItem>>(`/api/error-items/list?${params.toString()}`);
             setItems(response.items);
             setSelectedIds(new Set(response.items.map((item) => item.id)));

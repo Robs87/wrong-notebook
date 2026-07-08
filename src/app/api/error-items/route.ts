@@ -3,13 +3,17 @@ import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { calculateGrade } from "@/lib/grade-calculator";
-import { forbidden, unauthorized, internalError } from "@/lib/api-errors";
+import { forbidden, unauthorized, internalError, badRequest } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { inferSubjectFromName } from "@/lib/knowledge-tags";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
+import { compressDataUrl } from "@/lib/image-compress";
 
 const logger = createLogger('api:error-items');
+
+// 图片大小上限（base64 编码后字节），与 analyze 对齐
+const MAX_IMAGE_BASE64_LENGTH = 10 * 1024 * 1024;
 
 export async function POST(req: Request) {
     logger.info('POST /api/error-items called');
@@ -162,13 +166,22 @@ export async function POST(req: Request) {
 
         logger.info({ tagNames, tagConnectionsCount: tagConnections.length }, 'Creating ErrorItem with tags');
 
+        // 图片大小校验 + 服务端压缩（防 DB 膨胀）
+        let compressedImageUrl = originalImageUrl;
+        if (originalImageUrl) {
+            if (originalImageUrl.length > MAX_IMAGE_BASE64_LENGTH) {
+                return badRequest(`Image too large (max ${MAX_IMAGE_BASE64_LENGTH} bytes base64)`);
+            }
+            compressedImageUrl = await compressDataUrl(originalImageUrl);
+        }
+
         // 创建错题记录
         try {
             const errorItem = await prisma.errorItem.create({
                 data: {
                     userId: user.id,
                     subjectId: subjectId || undefined,
-                    originalImageUrl,
+                    originalImageUrl: compressedImageUrl,
                     questionText,
                     answerText,
                     analysis,

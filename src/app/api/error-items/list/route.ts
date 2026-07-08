@@ -155,10 +155,20 @@ export async function GET(req: Request) {
             take: pageSize,
         });
 
+        // 列表 UI 不展示原图，剥离 originalImageUrl 以大幅减少传输体积（base64 可能达数 MB/条）。
+        // 但打印预览页需要原图，通过 includeImage=true 显式索取。
+        const includeImage = searchParams.get("includeImage") === "true";
+        const itemsWithoutImage = errorItems.map((item) => {
+            if (includeImage) return item;
+            const { originalImageUrl: _stripped, ...rest } = item;
+            void _stripped;
+            return rest;
+        });
+
         const totalPages = Math.ceil(total / pageSize);
 
         return NextResponse.json({
-            items: errorItems,
+            items: itemsWithoutImage,
             total,
             page,
             pageSize,

@@ -79,6 +79,11 @@ COPY --from=builder --chown=nextjs:nodejs /app/scripts/seed-admin.js ./dist-scri
 # Copy the full package from the builder so the runtime script can resolve it.
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/bcryptjs ./node_modules/bcryptjs
 
+# sharp (服务端图片压缩 M31) 是原生依赖，含平台相关的 @img/* 预编译二进制。
+# standalone trace 不会复制这些原生子包，需显式 copy，否则运行时 require('sharp') 失败。
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/sharp ./node_modules/sharp
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@img ./node_modules/@img
+
 # Create data directory for SQLite persistence
 RUN mkdir -p /app/data && chown -R nextjs:nodejs /app/data
 

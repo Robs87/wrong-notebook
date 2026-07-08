@@ -152,6 +152,18 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Name and subject are required' }, { status: 400 });
         }
 
+        // 归属校验：parentId 若提供，必须属于当前用户的自定义标签或系统标签，
+        // 防止把标签挂到其他用户的私有标签下（跨租户层级污染）。
+        if (parentId) {
+            const parent = await prisma.knowledgeTag.findUnique({
+                where: { id: parentId },
+                select: { userId: true, isSystem: true },
+            });
+            if (!parent || (!parent.isSystem && parent.userId !== session.user.id)) {
+                return NextResponse.json({ error: 'Invalid parent tag' }, { status: 400 });
+            }
+        }
+
         // 检查是否已存在 (在同一父节点下)
         // 注意：Prisma对于可选字段的查询需要特殊处理。如果是null，必须显式指定。
         const existing = await prisma.knowledgeTag.findFirst({

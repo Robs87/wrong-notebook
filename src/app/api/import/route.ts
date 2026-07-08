@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { unauthorized, internalError, badRequest, forbidden } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { compressDataUrl } from "@/lib/image-compress";
 
 const logger = createLogger('api:import');
 
@@ -142,6 +143,13 @@ export async function POST(req: Request) {
             practiceRecordsCreated: 0,
             tagsLinked: 0,
         };
+
+        // 预压缩图片（在事务外，避免 sharp 阻塞事务、拉长锁持有时间）
+        for (const item of body.errorItems) {
+            if (item.originalImageUrl) {
+                item.originalImageUrl = await compressDataUrl(item.originalImageUrl);
+            }
+        }
 
         // 使用事务确保数据一致性
         await prisma.$transaction(async (tx) => {

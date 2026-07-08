@@ -2,10 +2,16 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
-import { unauthorized, internalError } from "@/lib/api-errors";
+import { unauthorized, internalError, badRequest } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { z } from "zod";
 
 const logger = createLogger('api:error-items:mastery');
+
+// masteryLevel 语义范围 0-2：0 未掌握 / 1 复习中 / 2 已掌握
+const masterySchema = z.object({
+    masteryLevel: z.number().int().min(0).max(2),
+});
 
 export async function PATCH(
     req: Request,
@@ -15,18 +21,17 @@ export async function PATCH(
     const session = await getServerSession(authOptions);
 
     try {
-        let user;
-        if (session?.user?.email) {
-            user = await prisma.user.findUnique({
-                where: { email: session.user.email },
-            });
-        }
-
-        if (!user) {
+        const userId = session?.user?.id;
+        if (!userId) {
             return unauthorized("Authentication required");
         }
 
-        const { masteryLevel } = await req.json();
+        const body = await req.json();
+        const parsed = masterySchema.safeParse(body);
+        if (!parsed.success) {
+            return badRequest("masteryLevel must be an integer between 0 and 2");
+        }
+        const { masteryLevel } = parsed.data;
 
         // Verify ownership before update
         const existingItem = await prisma.errorItem.findUnique({
@@ -38,7 +43,7 @@ export async function PATCH(
             return NextResponse.json({ message: "Item not found" }, { status: 404 });
         }
 
-        if (existingItem.userId !== user.id) {
+        if (existingItem.userId !== userId) {
             return NextResponse.json({ message: "Not authorized to update this item" }, { status: 403 });
         }
 

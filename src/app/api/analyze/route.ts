@@ -11,6 +11,10 @@ import { getErrorMessage, getErrorStack } from "@/lib/error-utils";
 
 const logger = createLogger('api:analyze');
 
+// 单张图片 base64 上限：10MB（base64 编码后约对应 7.5MB 原图），
+// 防止超大 payload 耗尽内存 / 放大 AI token 成本
+const MAX_IMAGE_BASE64_LENGTH = 10 * 1024 * 1024;
+
 export async function POST(req: Request) {
     logger.info('Analyze API called');
 
@@ -37,6 +41,15 @@ export async function POST(req: Request) {
         if (!imageBase64) {
             logger.warn('Missing image data');
             return badRequest("Missing image data");
+        }
+
+        // 限制图片大小，防止内存耗尽与成本放大
+        if (imageBase64.length > MAX_IMAGE_BASE64_LENGTH) {
+            logger.warn({ length: imageBase64.length, max: MAX_IMAGE_BASE64_LENGTH }, 'Image too large');
+            return NextResponse.json(
+                { message: `Image too large (max ${MAX_IMAGE_BASE64_LENGTH} bytes base64)` },
+                { status: 413 }
+            );
         }
 
         // Parse Data URL if present

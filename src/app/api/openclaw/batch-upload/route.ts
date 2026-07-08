@@ -7,6 +7,7 @@ import { inferSubjectFromName } from "@/lib/knowledge-tags";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { compare } from "bcryptjs";
 import { getErrorMessage, getErrorName, getErrorStack } from "@/lib/error-utils";
+import { compressDataUrl } from "@/lib/image-compress";
 
 const logger = createLogger('api:openclaw:batch-upload');
 
@@ -174,7 +175,8 @@ async function createErrorItem(
         data: {
             userId: userId,
             subjectId: subjectId || undefined,
-            originalImageUrl: `data:${mimeType};base64,${imageBase64}`,
+            // 入库前压缩，防止 DB 膨胀
+            originalImageUrl: await compressDataUrl(`data:${mimeType};base64,${imageBase64}`),
             ocrText: questionText || null,
             questionText: questionText || null,
             answerText: answerText || null,
