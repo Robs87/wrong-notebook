@@ -3,12 +3,16 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
-import { internalError, unauthorized, forbidden } from "@/lib/api-errors";
+import { internalError, unauthorized, forbidden, badRequest } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { compare } from "bcryptjs";
 
 const logger = createLogger('api:admin:system-reset');
 
-export async function POST() {
+// 确认口令需匹配的预期字符串（防误触/无脑重放）
+const CONFIRM_STRING = 'RESET ALL DATA';
+
+export async function POST(request: Request) {
     const session = await getServerSession(authOptions);
 
     if (!session || !session.user) {
@@ -19,35 +23,50 @@ export async function POST() {
     if (session.user.role !== 'admin') {
         return forbidden("Admin access required for system reset");
     }
-    // but typically this should be restricted.
-    // The user said "include user data", but wiping SELF is tricky.
-    // Let's implement safer "Factory Reset" logic:
-    // 1. Delete all ErrorItems
-    // 2. Delete all PracticeRecords
-    // 3. Delete all Subjects (Notebooks) - optional, but user said "clean all data"
-    // 4. Delete all Custom KnowledgeTags (isSystem = false)
-    // 5. Delete all AI Usage Logs (if any)
 
-    // We do NOT delete the current user, so they can still log in.
-    // If "include user data" means other users, we could delete them too, 
-    // but that invalidates their sessions immediately. 
-    // Let's assume for a single-user or small-team app, 'user data' means 'data belonging to users'.
+    const userId = session.user.id;
+    if (!userId) {
+        return unauthorized();
+    }
 
     try {
-        logger.info({ email: session.user.email }, 'System reset initiated');
+        // 二次认证：要求请求体携带当前 admin 的口令 + 确认字符串，
+        // 防止仅凭一个（可能已过期的）admin token 即可一键清库。
+        const body = await request.json().catch(() => null);
+        const password = typeof body?.password === 'string' ? body.password : '';
+        const confirm = typeof body?.confirm === 'string' ? body.confirm : '';
+
+        if (!password) {
+            return badRequest("Password confirmation required");
+        }
+        if (confirm !== CONFIRM_STRING) {
+            return badRequest(`Confirmation string must be exactly: ${CONFIRM_STRING}`);
+        }
+
+        // 校验口令
+        const admin = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { password: true, email: true },
+        });
+        if (!admin) {
+            return unauthorized();
+        }
+        const passwordOk = await compare(password, admin.password);
+        if (!passwordOk) {
+            logger.warn({ userId }, 'System reset password confirmation failed');
+            return forbidden("Password confirmation failed");
+        }
+
+        logger.info({ email: admin.email }, 'System reset initiated (password confirmed)');
 
         await prisma.$transaction(async (tx) => {
-            // 1. Delete Practice Records (dependent on nothing usually, or User/ErrorItem)
+            // 1. Delete Practice Records
             await tx.practiceRecord.deleteMany({});
 
-            // 2. Delete Error Items (cascade deletes tags? No, m-to-n. But we want to wipe items)
+            // 2. Delete Error Items
             await tx.errorItem.deleteMany({});
 
             // 3. Delete Subjects (Notebooks)
-            // Default subjects? Maybe keep them? User said "standard tags set to default".
-            // Usually subjects like 'Math' are created by users or system default?
-            // If we delete all subjects, the app might break if it expects at least one.
-            // The app creates default notebook on fetch if missing. So safe to delete.
             await tx.subject.deleteMany({});
 
             // 4. Delete Custom Tags (keep system tags)
@@ -57,19 +76,12 @@ export async function POST() {
                 }
             });
 
-            // 5. Delete other users? 
-            // "All data, including user data". 
-            // If I delete other users, I am truly resetting the system.
-            // Let's protect the CURRENT user.
-            if (session.user?.email) {
-                await tx.user.deleteMany({
-                    where: {
-                        email: {
-                            not: session.user.email
-                        }
-                    }
-                });
-            }
+            // 5. Delete other users, protect the current admin
+            await tx.user.deleteMany({
+                where: {
+                    id: { not: userId },
+                }
+            });
         });
 
         logger.info('System reset completed successfully');
