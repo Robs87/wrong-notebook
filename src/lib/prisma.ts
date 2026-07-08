@@ -29,7 +29,12 @@ if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
  */
 async function applySqlitePragmas(): Promise<void> {
     try {
-        await prisma.$executeRawUnsafe('PRAGMA journal_mode=WAL');
+        // journal_mode=WAL 会返回结果行（设置后的模式名），必须用 $queryRawUnsafe；
+        // 其余 pragma 不返回行，用 $executeRawUnsafe。
+        // 若用 $executeRawUnsafe 跑 journal_mode，better-sqlite3 会抛
+        // "Execute returned results, which is not allowed in SQLite"，
+        // 导致 WAL 不生效 → 配置读写因锁冲突而不稳定。
+        await prisma.$queryRawUnsafe('PRAGMA journal_mode=WAL');
         await prisma.$executeRawUnsafe('PRAGMA busy_timeout=5000');
         await prisma.$executeRawUnsafe('PRAGMA synchronous=NORMAL');
         await prisma.$executeRawUnsafe('PRAGMA foreign_keys=ON');
