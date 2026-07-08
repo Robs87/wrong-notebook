@@ -15,8 +15,14 @@ type NextAuthOptionsWithTrustHost = NextAuthOptions & {
  * 生产环境强制要求高强度 NEXTAUTH_SECRET，防止用公开/弱密钥签 JWT
  * 导致可离线伪造任意用户（含 admin）的 session cookie。
  * dev 环境宽松，仅警告。
+ *
+ * 注意：必须在 next build（页面数据收集会 import 本模块）期间跳过 ——
+ * build 环境没有运行时密钥是正常的，密钥在部署时才注入。
+ * 用 NEXT_PHASE === 'phase-production-build' 判定 build 阶段
+ * （Next.js 内部约定，见 next/dist/shared/lib/constants.js）。
  */
 function assertSecretStrength() {
+    if (process.env.NEXT_PHASE === 'phase-production-build') return;
     const secret = process.env.NEXTAUTH_SECRET;
     const isProd = process.env.NODE_ENV === 'production';
     if (!secret) {
