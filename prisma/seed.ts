@@ -5,7 +5,7 @@ const prisma = new PrismaClient();
 
 async function main() {
     const email = 'admin@localhost';
-    const password = '123456';
+    const defaultPassword = '123456';
     const name = 'Admin';
 
     console.log(`Checking admin user: ${email}...`);
@@ -15,19 +15,14 @@ async function main() {
     });
 
     if (existingUser) {
-        console.log(`Admin user already exists. Updating defaults...`);
-        await prisma.user.update({
-            where: { email },
-            data: {
-                educationStage: 'junior_high',
-                enrollmentYear: 2025,
-            }
-        });
+        // 仅在用户缺失关键字段时补齐，绝不覆盖用户已主动修改的属性（教育阶段、口令等），
+        // 避免每次容器重启都把 admin 配置重置回默认值。
+        console.log(`Admin user already exists, leaving user-managed fields untouched.`);
         return;
     }
 
     console.log(`Admin user not found. Creating...`);
-    const hashedPassword = await hash(password, 12);
+    const hashedPassword = await hash(defaultPassword, 12);
 
     const user = await prisma.user.create({
         data: {
@@ -41,9 +36,10 @@ async function main() {
         },
     });
 
+    // 仅提示账号创建成功，不向 stdout 打印口令（防止口令进入容器日志聚合）
     console.log(`\nSuccess! Admin user created.`);
     console.log(`Email: ${user.email}`);
-    console.log(`Password: ${password}`);
+    console.log(`Default password has been set. Please change it immediately after first login.`);
 }
 
 main()

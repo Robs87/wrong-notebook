@@ -114,6 +114,11 @@ model ErrorItem {
   updatedAt        DateTime @updatedAt
 
   reviewSchedules ReviewSchedule[]
+
+  // 核心查询路径索引：list 接口按用户 + 时间倒序分页，并按科目/掌握度筛选
+  @@index([userId, createdAt])
+  @@index([userId, subjectId])
+  @@index([userId, masteryLevel])
 }
 
 model ReviewSchedule {
@@ -132,10 +137,20 @@ model PracticeRecord {
   id        String   @id @default(cuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
   subject   String?  // e.g. "Math", "Physics"
   difficulty String? // "easy", "medium", "hard", "harder"
   isCorrect Boolean?
-  
+
   createdAt DateTime @default(now())
 }
+
+// 全局应用配置（单租户）。整个 AppConfig 序列化为 JSON 存于 value 字段，
+// 其中 API Key 等密钥在写入前经 AES-256-GCM 加密（密钥由 NEXTAUTH_SECRET 派生）。
+// 固定单行（id=1），避免多行配置歧义。
+model AppSetting {
+  id        Int      @id @default(1)
+  value     String   // AppConfig 的 JSON 序列化（密钥字段已加密）
+  updatedAt DateTime @updatedAt
+}
+

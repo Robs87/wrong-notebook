@@ -54,9 +54,10 @@ async function main() {
         if (result.action === 'created') {
             console.log('Success! Admin user created.');
             console.log(`Email: ${result.email}`);
-            console.log(`Password: ${DEFAULT_ADMIN.password}`);
+            // 不向 stdout 打印口令，避免进入容器日志聚合。首次登录请使用默认口令并立即修改。
+            console.log('Default password is set. Please change it immediately after first login.');
         } else {
-            console.log('Admin user already exists. Updated defaults.');
+            console.log('Admin user already exists. Ensured admin role/active state.');
         }
     } finally {
         await prisma.$disconnect();
