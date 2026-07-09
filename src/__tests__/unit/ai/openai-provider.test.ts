@@ -148,7 +148,29 @@ describe('OpenAI Provider 响应解析', () => {
 <answer_text>测试答案</answer_text>
             `.trim();
 
-            expect(() => asPrivateProvider(provider).parseResponse(mockResponse)).toThrow('Missing critical XML tags');
+            expect(() => asPrivateProvider(provider).parseResponse(mockResponse)).toThrow('AI_RESPONSE_ERROR');
+        });
+
+        it('CoT 泄漏进 answer_text（答案+解析全塞入、analysis 开标签缺失）时应成功解析', () => {
+            // 复刻 unraid 实测失败样本：agnes-2.0-flash 把答案和完整解析写进
+            // <answer_text>，只甩一个孤立 </analysis>。新逻辑应从 answer_text 拆分补救。
+            const mockResponse = [
+                '<question_text>流水步距计算题。</question_text>',
+                '<answer_key>AB</answer_key>',
+                '<answer_text>',
+                '【正确答案】AB',
+                '【答案解析】',
+                '1. 流水步距等于各流水节拍的最大公约数。',
+                '2. 专业工作队数为节拍除以步距之和。',
+                '</analysis>',
+            ].join('\n');
+
+            const result = asPrivateProvider(provider).parseResponse(mockResponse);
+            expect(result.questionText).toBe('流水步距计算题。');
+            expect(result.answerKey).toBe('AB');
+            expect(result.answerText).toBe('【正确答案】AB');
+            expect(result.analysis).toContain('【答案解析】');
+            expect(result.analysis).toContain('流水步距');
         });
     });
 });

@@ -6,7 +6,7 @@ import { getAppConfig } from '../config';
 import { getMathTagsFromDB, getTagsFromDB } from './tag-service';
 import { createLogger } from '../logger';
 import { normalizeMistakeStatusForSave } from '../mistake-status';
-import { extractTag, parseJsonLoose } from './response-parser';
+import { extractTag, parseJsonLoose, recoverAnalysisFromAnswerText } from './response-parser';
 
 const logger = createLogger('ai:gemini');
 
@@ -116,11 +116,20 @@ export class GeminiProvider implements AIService {
         const mistakeAnalysis = extractTag(text, "mistake_analysis") || "";
         const mistakeStatusRaw = extractTag(text, "mistake_status");
 
+        // analysis 缺失补救：推理模型常把答案+解析全塞进 <answer_text> 而漏掉
+        // <analysis> 开标签。尝试从 answer_text 拆分出解析内容，避免整体解析失败。
+        const recovered = recoverAnalysisFromAnswerText(answerText, analysis);
+        const finalAnswerText = recovered.answerText;
+        const finalAnalysis = recovered.analysis;
+        const analysisWasRecovered = recovered.recovered;
+
         // Basic Validation - require answer and analysis, questionText is optional
         // (reanswer template doesn't output <question_text>)
-        if (!answerText || !analysis) {
-            logger.error({ rawTextSample: text.substring(0, 500) }, 'Missing critical XML tags');
-            throw new Error("Invalid AI response: Missing critical XML tags");
+        if (!finalAnswerText || !finalAnalysis) {
+            logger.error({ rawTextSample: text.substring(0, 500), analysisWasRecovered }, 'Missing critical XML tags');
+            // 消息须含 "parse" 关键字，使 handleError 正确归类为 AI_RESPONSE_ERROR
+            // 而非 AI_UNKNOWN_ERROR（旧消息缺少可识别关键词，被误报为未知错误）
+            throw new Error("AI_RESPONSE_ERROR: failed to parse AI output, missing/malformed XML tags (<answer_text> or <analysis>)");
         }
 
         // Process Subject
@@ -146,8 +155,8 @@ export class GeminiProvider implements AIService {
         // Construct Result
         const result: ParsedQuestion = {
             questionText: safeQuestionText,
-            answerText,
-            analysis,
+            answerText: finalAnswerText,
+            analysis: finalAnalysis,
             wrongAnswerText,
             mistakeAnalysis,
             mistakeStatus,

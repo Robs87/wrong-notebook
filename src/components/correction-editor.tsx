@@ -142,6 +142,20 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                 errorText = reanswerErrors.connectionFailed || t.errors?.AI_CONNECTION_FAILED || errorText;
             } else if (msg.includes('AI_RESPONSE_ERROR')) {
                 errorText = reanswerErrors.responseError || t.errors?.AI_RESPONSE_ERROR || errorText;
+            } else {
+                // 补全其余 AI_* 码（timeout/quota/service/permission/notfound/unknown），
+                // 回退到 t.errors 顶层 SCREAMING_SNAKE 键（中英文均已存在）。
+                const otherCodes = [
+                    'AI_TIMEOUT_ERROR', 'AI_QUOTA_EXCEEDED', 'AI_SERVICE_UNAVAILABLE',
+                    'AI_PERMISSION_DENIED', 'AI_NOT_FOUND', 'AI_UNKNOWN_ERROR',
+                ];
+                if (t.errors && typeof t.errors === 'object') {
+                    const matched = otherCodes.find((code) => msg.includes(code));
+                    if (matched && matched in t.errors) {
+                        const mapped = (t.errors as unknown as Record<string, string>)[matched];
+                        if (mapped) errorText = mapped;
+                    }
+                }
             }
 
             alert(errorText);

@@ -83,16 +83,27 @@ function PracticeContent() {
             console.error(error);
             const msg = getErrorDataMessage(error) || "";
 
-            let errorMessage = t.practice.errors?.default || "Failed to generate";
+            // 动态错误码查表：覆盖所有后端抛出的 AI_* 错误码
+            // （AI_RESPONSE_ERROR / AI_TIMEOUT_ERROR / AI_QUOTA_EXCEEDED /
+            //  AI_PERMISSION_DENIED / AI_NOT_FOUND / AI_SERVICE_UNAVAILABLE /
+            //  AI_CONNECTION_FAILED / AI_AUTH_ERROR / AI_UNKNOWN_ERROR）
+            // t.errors 中这些 SCREAMING_SNAKE 键中英文均已存在。
+            const fallback = t.practice.errors?.default || "Failed to generate";
+            let errorMessage = fallback;
 
-            if (msg.includes('AI_CONNECTION_FAILED')) {
-                errorMessage = t.errors?.aiConnectionFailed || errorMessage;
-            } else if (msg.includes('AI_RESPONSE_ERROR')) {
-                errorMessage = t.errors?.aiResponseError || errorMessage;
-            } else if (msg.includes('AI_AUTH_ERROR')) {
-                errorMessage = t.errors?.aiAuth || errorMessage;
-            } else if (msg.includes('AI_UNKNOWN_ERROR')) {
-                errorMessage = t.errors?.AI_UNKNOWN_ERROR || errorMessage;
+            if (t.errors && typeof t.errors === 'object') {
+                // 优先匹配具体的 AI_* 码（含 RESPONSE/TIMEOUT/QUOTA 等）
+                const errorCodes = [
+                    'AI_RESPONSE_ERROR', 'AI_TIMEOUT_ERROR', 'AI_QUOTA_EXCEEDED',
+                    'AI_PERMISSION_DENIED', 'AI_NOT_FOUND', 'AI_SERVICE_UNAVAILABLE',
+                    'AI_CONNECTION_FAILED', 'AI_AUTH_ERROR', 'AI_UNKNOWN_ERROR',
+                ];
+                const matchedCode = errorCodes.find((code) => msg.includes(code));
+                if (matchedCode && matchedCode in t.errors) {
+                    // t.errors 含 reanswer 子对象，非纯 Record<string,string>，经 unknown 中转安全访问
+                    const mapped = (t.errors as unknown as Record<string, string>)[matchedCode];
+                    if (mapped) errorMessage = mapped;
+                }
             }
 
             setError(errorMessage);
