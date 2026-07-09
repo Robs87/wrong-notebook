@@ -18,12 +18,12 @@ vi.mock('@/lib/logger', () => ({
 }));
 
 // Mock @prisma/client：构造一个可控的 PrismaClient + Prisma 命名空间
-const mockExecuteRawUnsafe = vi.fn();
+const mockQueryRawUnsafe = vi.fn();
 
 vi.mock('@prisma/client', () => {
     return {
         PrismaClient: class MockPrismaClient {
-            $executeRawUnsafe = mockExecuteRawUnsafe;
+            $queryRawUnsafe = mockQueryRawUnsafe;
         },
         Prisma: {
             PrismaClientKnownRequestError: class PrismaClientKnownRequestError extends Error {
@@ -44,7 +44,7 @@ describe('SQLite 加固 (M7)', () => {
         await import('@/lib/prisma');
         await new Promise((r) => setTimeout(r, 80));
 
-        const calls = mockExecuteRawUnsafe.mock.calls.map((c) => c[0]);
+        const calls = mockQueryRawUnsafe.mock.calls.map((c) => c[0]);
         expect(calls).toContain('PRAGMA journal_mode=WAL');
         expect(calls).toContain('PRAGMA busy_timeout=5000');
         expect(calls).toContain('PRAGMA synchronous=NORMAL');
@@ -105,6 +105,6 @@ describe('SQLite 加固 (M7)', () => {
     it('prisma 单例被导出', async () => {
         const { prisma } = await import('@/lib/prisma');
         expect(prisma).toBeDefined();
-        expect(typeof prisma.$executeRawUnsafe).toBe('function');
+        expect(typeof prisma.$queryRawUnsafe).toBe('function');
     });
 });

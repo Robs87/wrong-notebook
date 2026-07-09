@@ -29,10 +29,15 @@ if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
  */
 async function applySqlitePragmas(): Promise<void> {
     try {
-        await prisma.$executeRawUnsafe('PRAGMA journal_mode=WAL');
-        await prisma.$executeRawUnsafe('PRAGMA busy_timeout=5000');
-        await prisma.$executeRawUnsafe('PRAGMA synchronous=NORMAL');
-        await prisma.$executeRawUnsafe('PRAGMA foreign_keys=ON');
+        // 用 $queryRawUnsafe 而非 $executeRawUnsafe：journal_mode / busy_timeout 这两条
+        // pragma 在赋值时会返回结果行，而 $executeRawUnsafe 走 SQLite 的 .run() 路径、
+        // 不分配结果缓冲，遇到返回行会抛 "Execute returned results, which is not allowed in
+        // SQLite."。$queryRawUnsafe 对"返回行"和"不返回行(返回 [])"两类 pragma 都安全，
+        // 可让四项加固真正落地（此前 journal_mode / busy_timeout 被 try/catch 静默吞掉）。
+        await prisma.$queryRawUnsafe('PRAGMA journal_mode=WAL');
+        await prisma.$queryRawUnsafe('PRAGMA busy_timeout=5000');
+        await prisma.$queryRawUnsafe('PRAGMA synchronous=NORMAL');
+        await prisma.$queryRawUnsafe('PRAGMA foreign_keys=ON');
         logger.info('SQLite pragmas applied (WAL, busy_timeout=5000, synchronous=NORMAL, foreign_keys=ON)');
     } catch (error) {
         // pragma 失败不阻塞启动（兼容非 SQLite 或权限受限环境），仅告警
