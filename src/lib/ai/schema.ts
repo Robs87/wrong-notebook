@@ -7,6 +7,12 @@ import { z } from 'zod';
 export const ParsedQuestionSchema = z.object({
     questionText: z.string().min(1, "题目文本不能为空"),
     answerText: z.string().min(1, "答案不能为空"),
+    /**
+     * 机器可判的极简答案（仅最终结果，如 "5"、"1/2"、"B"、"3,-3"）。
+     * 仅 similar（举一反三）模板会输出该字段；analyze/reanswer 不输出。
+     * 用于判分时优先比较，避免拿富文本 answerText 做字符串匹配。
+     */
+    answerKey: z.string().optional(),
     analysis: z.string().min(1, "解析不能为空"),
     wrongAnswerText: z.string().optional().default(""),
     mistakeAnalysis: z.string().optional().default(""),

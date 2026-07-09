@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { apiClient } from "@/lib/api-client";
+import { judgeAnswerLocally } from "@/lib/ai/judge";
 import { getErrorDataMessage } from "@/lib/error-utils";
 import { AppConfig } from "@/types/api";
 import { frontendLogger } from "@/lib/frontend-logger";
@@ -37,6 +38,7 @@ function PracticeContent() {
     const [notes, setNotes] = useState("");
     const [isSubmitted, setIsSubmitted] = useState(false);
     const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
+    const [judging, setJudging] = useState(false);
     const [config, setConfig] = useState<AppConfig | null>(null);
 
     useEffect(() => {
@@ -99,26 +101,35 @@ function PracticeContent() {
         }
     };
 
-    const submitAnswer = () => {
+    const submitAnswer = async () => {
         if (!userAnswer.trim() || !question) return;
 
         setIsSubmitted(true);
+        setJudging(true);
 
-        const normalize = (str: string) => str.trim().toLowerCase().replace(/[.,;!]/g, '');
-        const user = normalize(userAnswer);
-        const correct = normalize(question.answerText);
-
-        // Enhanced comparison logic
-        let isMatch = user === correct;
-
-        // Handle multiple choice (e.g. user enters "A" but answer is "A. some text")
-        if (!isMatch && /^[a-d]$/.test(user)) {
-            isMatch = correct.startsWith(user);
-        }
-
-        // Handle case where answer contains the user input (e.g. answer is "The answer is 5" and user enters "5")
-        if (!isMatch && correct.includes(user) && user.length > 1) {
-            isMatch = true;
+        let isMatch: boolean;
+        try {
+            // 主路径：调用后端 AI 语义判分（能处理 1/2≈0.5、LaTeX、多解等价等情况）
+            const data = await apiClient.post<{ isCorrect: boolean; reason?: string; judgedBy?: string }>(
+                "/api/practice/check",
+                {
+                    questionText: question.questionText,
+                    standardAnswer: question.answerText,
+                    answerKey: question.answerKey,
+                    studentAnswer: userAnswer,
+                    language,
+                },
+                { timeout: config?.timeouts?.analyze || 180000 }
+            );
+            isMatch = !!data.isCorrect;
+        } catch (err) {
+            // 后端整条链路都挂了（网络断、鉴权失败等）：前端再兜一次本地判分，
+            // 保证用户不会因为服务异常而看到"判分失败"。此处覆盖率有限，
+            // 仅覆盖大小写/数值等最常见字面差异。
+            console.error("AI judge failed, using client fallback:", err);
+            isMatch = judgeAnswerLocally(userAnswer, question.answerText, question.answerKey);
+        } finally {
+            setJudging(false);
         }
 
         setIsCorrect(isMatch);
@@ -219,7 +230,7 @@ function PracticeContent() {
                                             }
                                         }}
                                         className="h-8 text-xs border rounded px-2 bg-background"
-                                        disabled={loading}
+                                        disabled={loading || judging}
                                     >
                                         <option value="easy">{t.practice.difficulty?.easy || "Easy"}</option>
                                         <option value="medium">{t.practice.difficulty?.medium || "Medium"}</option>
@@ -230,7 +241,7 @@ function PracticeContent() {
                                         variant="ghost"
                                         size="sm"
                                         onClick={generateQuestion}
-                                        disabled={loading}
+                                        disabled={loading || judging}
                                     >
                                         {loading ? (
                                             <>
@@ -291,6 +302,22 @@ function PracticeContent() {
                                 {t.app.submitAnswer || "提交答案"}
                             </Button>
                         </div>
+                    ) : judging ? (
+                        <Card className="border-blue-300 bg-blue-50">
+                            <CardContent className="pt-6">
+                                <div className="flex items-center gap-3">
+                                    <Loader2 className="h-8 w-8 text-blue-600 animate-spin" />
+                                    <div>
+                                        <h3 className="text-xl font-bold text-blue-600">
+                                            {t.practice.verifying || "正在 AI 智能判分..."}
+                                        </h3>
+                                        <p className="text-blue-700">
+                                            {t.practice.verifyingMessage || "正在判断你的答案是否与标准答案等价，请稍候"}
+                                        </p>
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
                     ) : (
                         <Card className={isCorrect ? "border-green-500 bg-green-50" : "border-red-500 bg-red-50"}>
                             <CardContent className="pt-6">

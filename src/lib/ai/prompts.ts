@@ -266,8 +266,17 @@ export const DEFAULT_SIMILAR_TEMPLATE = `你是一位资深的K12教育题目生
 在此处填写新生成的题目文本。包含选项（如果是选择题）。
 </question_text>
 
+<answer_key>
+【机器可判答案】在此处填写新题目的**最终答案**，要求极度精简，只保留判分所需的最少信息：
+- 选择题：仅填字母，如 B
+- 填空/计算题：仅填最终数值或表达式，如 5、1/2、$\\frac{1}{2}$、x=3
+- 多解填空：用逗号分隔，如 3,-3
+- 简答/论述题：填关键词或核心结论
+禁止写"解："、"答案是"等说明性文字，禁止写解题过程。
+</answer_key>
+
 <answer_text>
-在此处填写新题目的正确答案。
+在此处填写新题目的完整正确答案（含必要的说明，用于向学生展示）。
 </answer_text>
 
 <analysis>
@@ -688,4 +697,129 @@ export function generateReanswerPrompt(
     grade_instruction: generateGradeInstruction(gradeSemester),
     provider_hints: options?.providerHints || ''
   }).trim();
+}
+
+/**
+ * 答案判分提示词模板。
+ *
+ * 让 LLM 判定"学生答案"与"标准答案"是否在语义上等价，而非字面相等。
+ * 这能处理本地字符串匹配无法覆盖的情况：分数/LaTeX 等价（1/2 ≈ 0.5 ≈
+ * $\frac{1}{2}$）、单位、多解、近似值、表述差异等。
+ *
+ * 输出要求严格自定义标签 <verdict> + <reason>，便于解析。
+ */
+export const DEFAULT_JUDGE_TEMPLATE = `你是一位严谨的阅卷老师。你的任务是判定学生的答案与标准答案是否等价（语义/数值等价，而非字面相等）。
+
+{{language_instruction}}
+
+【判定原则 (JUDGING PRINCIPLES)】
+1. 语义等价而非字面相等：只要学生答案与标准答案在数学/语义上表达同一个正确结果，即判定正确。
+   - 数值等价：1/2 = 0.5 = 50% = $\\frac{1}{2}$ = 二分之一
+   - 多解完整：标准答案 "3,-3" 时，学生只写 "3" 视为不完整 → 判错；写 "3 或 -3" / "±3" → 判对
+   - 近似值：若标准答案为近似值（如 π≈3.14），学生 3.14 / 3.14159 等合理近似均判对
+   - 选择题：标准答案 B，学生写 "B" / "b" / "选项B" / 写出 B 对应的完整选项文本 → 判对
+   - 单位：若题目要求单位，学生漏写单位导致量纲错误才判错；否则不应仅因单位判错
+2. 只要核心结果正确即判对，不因书写格式（如多余的"x="、"解："前缀）判错。
+3. 学生答案存在实质性错误（数值错、逻辑错、方向错）才判错。
+4. 学生的答案必须完整覆盖标准答案的全部要点；部分正确（如多解漏写、步骤对但结论错）判错。
+5. 当且仅当你确信学生答错时才判 wrong；有任何合理理由认为等价，都判 right。
+
+【题目 (QUESTION)】
+{{question_text}}
+
+【标准答案 (STANDARD ANSWER)】
+{{standard_answer}}
+
+【机器可判答案 (ANSWER KEY，可能为空)】
+{{answer_key}}
+
+【学生答案 (STUDENT ANSWER)】
+{{student_answer}}
+
+【输出格式 (OUTPUT FORMAT)】
+必须严格只输出以下两个标签，不要输出任何其他文字：
+
+<verdict>
+right 或 wrong
+</verdict>
+
+<reason>
+用一句话简述判定理由（中文，不超过50字）。
+</reason>`;
+
+/**
+ * 生成答案判分提示词。
+ * @param questionText   题干（围栏化，防注入）
+ * @param standardAnswer 标准答案全文（展示用，围栏化）
+ * @param answerKey      机器可判极简答案（可能为空）
+ * @param studentAnswer  学生输入答案（围栏化）
+ * @param language       语言
+ */
+export function generateJudgeAnswerPrompt(
+    questionText: string,
+    standardAnswer: string,
+    answerKey: string | undefined,
+    studentAnswer: string,
+    language: 'zh' | 'en' = 'zh'
+): string {
+    const langInstruction = language === 'zh'
+        ? "判定理由请使用简体中文。"
+        : "Please provide the reason in English.";
+
+    const template = DEFAULT_JUDGE_TEMPLATE;
+
+    return replaceVariables(template, {
+        language_instruction: langInstruction,
+        question_text: fenceUserContent(questionText),
+        standard_answer: fenceUserContent(standardAnswer),
+        answer_key: fenceUserContent(answerKey || '（无）'),
+        student_answer: fenceUserContent(studentAnswer),
+    }).trim();
+}
+
+/**
+ * 从 AI 判分响应文本中解析出 { isCorrect, reason }。
+ * 容错：<verdict> 内容做 trim/小写后匹配 "right"/"correct"/"true"/"对" 为正确，
+ * "wrong"/"incorrect"/"false"/"错" 为错误；无法识别时返回 null（由调用方走兜底）。
+ */
+export interface JudgeVerdict {
+    isCorrect: boolean;
+    reason: string;
+}
+
+export function parseJudgeResponse(text: string): JudgeVerdict | null {
+    if (!text) return null;
+
+    const verdictRaw = extractTagLoose(text, 'verdict');
+    if (!verdictRaw) return null;
+
+    const v = verdictRaw.trim().toLowerCase().replace(/[.,;:!？。，]/g, '');
+    let isCorrect: boolean | null = null;
+    if (['right', 'correct', 'true', '对', '正确'].includes(v)) isCorrect = true;
+    else if (['wrong', 'incorrect', 'false', '错', '错误'].includes(v)) isCorrect = false;
+    else {
+        // 模糊兜底：以 r/c/t 开头判对，w/i/f 判错（防御模型输出 "right." 等）
+        if (/^(r|c|t|对|正)/.test(v)) isCorrect = true;
+        else if (/^(w|i|f|错|误)/.test(v)) isCorrect = false;
+    }
+    if (isCorrect === null) return null;
+
+    const reason = extractTagLoose(text, 'reason') || '';
+    return { isCorrect, reason: reason.trim().slice(0, 200) };
+}
+
+/**
+ * 从文本中宽松提取 XML 标签内容（不依赖 response-parser 的 extractTag，
+ * 保持本模块自包含，且允许 reasoning 模型把标签放到任意位置）。
+ */
+function extractTagLoose(text: string, tagName: string): string | null {
+    const start = text.indexOf(`<${tagName}>`);
+    if (start === -1) return null;
+    const contentStart = start + tagName.length + 2;
+    const end = text.indexOf(`</${tagName}>`, contentStart);
+    if (end === -1) {
+        // 闭合标签丢失（截断），读到末尾
+        return text.substring(contentStart).trim();
+    }
+    return text.substring(contentStart, end).trim();
 }

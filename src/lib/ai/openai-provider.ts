@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
-import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, ReanswerQuestionResult, GeogebraAnalysisResult } from "./types";
-import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateGeogebraPrompt, resolvePromptTemplate } from './prompts';
+import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, ReanswerQuestionResult, GeogebraAnalysisResult, JudgeAnswerResult } from "./types";
+import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateGeogebraPrompt, generateJudgeAnswerPrompt, parseJudgeResponse, resolvePromptTemplate } from './prompts';
 import { getAppConfig } from '../config';
 import { safeParseParsedQuestion } from './schema';
 import { getMathTagsFromDB, getTagsFromDB } from './tag-service';
@@ -111,6 +111,7 @@ export class OpenAIProvider implements AIService {
         logger.debug({ textLength: text.length }, 'Parsing AI response');
 
         const questionText = extractTag(text, "question_text");
+        const answerKey = extractTag(text, "answer_key") || "";
         const answerText = extractTag(text, "answer_text");
         const analysis = extractTag(text, "analysis");
         const subjectRaw = extractTag(text, "subject");
@@ -158,7 +159,9 @@ export class OpenAIProvider implements AIService {
                     mistakeStatus,
                     subject,
                     knowledgePoints,
-                    requiresImage
+                    requiresImage,
+                    // answerKey 仅 similar 模板会产出；其他场景为空字符串，schema 允许 undefined
+                    ...(answerKey ? { answerKey } : {}),
                 };
 
         // Final Schema Validation (just to be safe, though likely compliant by now)
@@ -469,6 +472,54 @@ export class OpenAIProvider implements AIService {
 
         } catch (error) {
             logger.error({ error, stack: error instanceof Error ? error.stack : undefined }, 'Error during reanswer');
+            this.handleError(error);
+            throw error;
+        }
+    }
+
+    async judgeAnswer(params: {
+        questionText: string;
+        standardAnswer: string;
+        answerKey?: string;
+        studentAnswer: string;
+        language?: 'zh' | 'en';
+    }): Promise<JudgeAnswerResult> {
+        const { questionText, standardAnswer, answerKey, studentAnswer, language = 'zh' } = params;
+        const prompt = generateJudgeAnswerPrompt(questionText, standardAnswer, answerKey, studentAnswer, language);
+
+        logger.info({
+            provider: 'OpenAI',
+            endpoint: `${this.baseURL}/chat/completions`,
+            model: this.model,
+            studentAnswerLen: studentAnswer.length,
+        }, 'Judge Answer Request');
+
+        try {
+            const params: ChatCompletionCreateParamsNonStreaming = {
+                model: this.model,
+                messages: [
+                    { role: "system", content: prompt },
+                    { role: "user", content: "请判定学生答案是否正确。" }
+                ],
+                max_tokens: 256,
+                ...getDisableThinkingBody(),
+            };
+            const response = await this.openai.chat.completions.create(params);
+
+            const text = extractResponseText(response.choices[0]?.message);
+            logger.debug({ rawResponse: text }, 'Judge AI raw response');
+
+            if (!text) throw new Error("Empty response from AI");
+
+            const verdict = parseJudgeResponse(text);
+            if (!verdict) {
+                logger.warn({ rawTextSample: text.substring(0, 300) }, 'Judge verdict unparseable');
+                throw new Error("AI_RESPONSE_ERROR: judge verdict unparseable");
+            }
+
+            return { isCorrect: verdict.isCorrect, reason: verdict.reason, judgedBy: 'ai' };
+        } catch (error) {
+            logger.error({ error, stack: error instanceof Error ? error.stack : undefined }, 'Error during answer judging');
             this.handleError(error);
             throw error;
         }

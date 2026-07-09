@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
-import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, ReanswerQuestionResult, GeogebraAnalysisResult } from "./types";
-import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateGeogebraPrompt, resolvePromptTemplate } from './prompts';
+import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, ReanswerQuestionResult, GeogebraAnalysisResult, JudgeAnswerResult } from "./types";
+import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateGeogebraPrompt, generateJudgeAnswerPrompt, parseJudgeResponse, resolvePromptTemplate } from './prompts';
 import { safeParseParsedQuestion } from './schema';
 import { getAppConfig } from '../config';
 import { getMathTagsFromDB, getTagsFromDB } from './tag-service';
@@ -106,6 +106,7 @@ export class GeminiProvider implements AIService {
         logger.debug({ textLength: text.length }, 'Parsing AI response');
 
         const questionText = extractTag(text, "question_text");
+        const answerKey = extractTag(text, "answer_key") || "";
         const answerText = extractTag(text, "answer_text");
         const analysis = extractTag(text, "analysis");
         const subjectRaw = extractTag(text, "subject");
@@ -152,7 +153,8 @@ export class GeminiProvider implements AIService {
             mistakeStatus,
             subject,
             knowledgePoints,
-            requiresImage
+            requiresImage,
+            ...(answerKey ? { answerKey } : {}),
         };
 
         // Final Schema Validation
@@ -366,6 +368,52 @@ export class GeminiProvider implements AIService {
 
         } catch (error) {
             logger.error({ error, stack: error instanceof Error ? error.stack : undefined }, 'Error during reanswer');
+            this.handleError(error);
+            throw error;
+        }
+    }
+
+    async judgeAnswer(params: {
+        questionText: string;
+        standardAnswer: string;
+        answerKey?: string;
+        studentAnswer: string;
+        language?: 'zh' | 'en';
+    }): Promise<JudgeAnswerResult> {
+        const { questionText, standardAnswer, answerKey, studentAnswer, language = 'zh' } = params;
+        const prompt = generateJudgeAnswerPrompt(questionText, standardAnswer, answerKey, studentAnswer, language);
+
+        logger.info({
+            provider: 'Gemini',
+            endpoint: `${this.baseUrl}/v1beta/models/${this.modelName}:generateContent`,
+            model: this.modelName,
+            studentAnswerLen: studentAnswer.length,
+        }, 'Judge Answer Request');
+
+        try {
+            const response = await this.retryOperation(() => {
+                const { signal, timeoutId } = this.createTimeoutSignal();
+                return this.ai.models.generateContent({
+                    model: this.modelName,
+                    contents: prompt,
+                    config: { abortSignal: signal },
+                }).finally(() => clearTimeout(timeoutId));
+            });
+
+            const text = response.text || '';
+            logger.debug({ rawResponse: text }, 'Judge AI raw response');
+
+            if (!text) throw new Error("Empty response from AI");
+
+            const verdict = parseJudgeResponse(text);
+            if (!verdict) {
+                logger.warn({ rawTextSample: text.substring(0, 300) }, 'Judge verdict unparseable');
+                throw new Error("AI_RESPONSE_ERROR: judge verdict unparseable");
+            }
+
+            return { isCorrect: verdict.isCorrect, reason: verdict.reason, judgedBy: 'ai' };
+        } catch (error) {
+            logger.error({ error, stack: error instanceof Error ? error.stack : undefined }, 'Error during answer judging');
             this.handleError(error);
             throw error;
         }
