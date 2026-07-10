@@ -12,15 +12,22 @@ vi.mock('@/lib/logger', () => ({
         debug: vi.fn(),
         error: vi.fn(),
         info: vi.fn(),
+        warn: vi.fn(),
     })),
 }));
 
-import { middleware } from '@/middleware';
+const prismaMocks = vi.hoisted(() => ({ userFindUnique: vi.fn() }));
+vi.mock('@/lib/prisma', () => ({
+    prisma: { user: { findUnique: prismaMocks.userFindUnique } },
+}));
+
+import { proxy } from '@/proxy';
 import { getToken } from 'next-auth/jwt';
 
 describe('middleware', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        prismaMocks.userFindUnique.mockResolvedValue({ role: 'user', isActive: true });
     });
 
     afterEach(() => {
@@ -32,7 +39,7 @@ describe('middleware', () => {
             vi.mocked(getToken).mockResolvedValue(null);
 
             const req = new NextRequest('http://localhost:3000/notebooks');
-            const response = await middleware(req);
+            const response = await proxy(req);
 
             expect(response).not.toBeNull();
             expect(response?.status).toBe(307); // Redirect status
@@ -44,7 +51,7 @@ describe('middleware', () => {
             vi.mocked(getToken).mockResolvedValue(null);
 
             const req = new NextRequest('http://localhost:3000/login');
-            const response = await middleware(req);
+            const response = await proxy(req);
 
             // 返回 null 表示不拦截
             expect(response).toBeNull();
@@ -54,7 +61,7 @@ describe('middleware', () => {
             vi.mocked(getToken).mockResolvedValue(null);
 
             const req = new NextRequest('http://localhost:3000/register');
-            const response = await middleware(req);
+            const response = await proxy(req);
 
             expect(response).toBeNull();
         });
@@ -63,7 +70,7 @@ describe('middleware', () => {
             vi.mocked(getToken).mockResolvedValue(null);
 
             const req = new NextRequest('http://localhost:3000/notebooks/123?tab=details');
-            const response = await middleware(req);
+            const response = await proxy(req);
 
             expect(response).not.toBeNull();
             const location = response?.headers.get('location') || '';
@@ -87,17 +94,37 @@ describe('middleware', () => {
             } as never);
 
             const req = new NextRequest('http://localhost:3000/notebooks');
-            const response = await middleware(req);
+            const response = await proxy(req);
 
             expect(response?.status).toBe(307);
             expect(response?.headers.get('location')).toContain('/login');
+        });
+
+        it('旧 token 仍有 id 时也应该以数据库禁用状态为准', async () => {
+            vi.mocked(getToken).mockResolvedValue(mockToken as never);
+            prismaMocks.userFindUnique.mockResolvedValue({ role: 'user', isActive: false });
+
+            const response = await proxy(new NextRequest('http://localhost:3000/notebooks'));
+
+            expect(response?.status).toBe(307);
+            expect(response?.headers.get('location')).toContain('/login');
+        });
+
+        it('旧 token 声称 admin 时也应该以数据库最新角色为准', async () => {
+            vi.mocked(getToken).mockResolvedValue({ ...mockToken, role: 'admin' } as never);
+            prismaMocks.userFindUnique.mockResolvedValue({ role: 'user', isActive: true });
+
+            const response = await proxy(new NextRequest('http://localhost:3000/admin'));
+
+            expect(response?.status).toBe(307);
+            expect(response?.headers.get('location')).toBe('http://localhost:3000/');
         });
 
         it('应该允许已认证用户访问受保护页面', async () => {
             vi.mocked(getToken).mockResolvedValue(mockToken as never);
 
             const req = new NextRequest('http://localhost:3000/notebooks');
-            const response = await middleware(req);
+            const response = await proxy(req);
 
             // 返回 undefined 表示允许继续
             expect(response).toBeUndefined();
@@ -107,7 +134,7 @@ describe('middleware', () => {
             vi.mocked(getToken).mockResolvedValue(mockToken as never);
 
             const req = new NextRequest('http://localhost:3000/login');
-            const response = await middleware(req);
+            const response = await proxy(req);
 
             expect(response).not.toBeNull();
             expect(response?.status).toBe(307);
@@ -118,7 +145,7 @@ describe('middleware', () => {
             vi.mocked(getToken).mockResolvedValue(mockToken as never);
 
             const req = new NextRequest('http://localhost:3000/register');
-            const response = await middleware(req);
+            const response = await proxy(req);
 
             expect(response).not.toBeNull();
             expect(response?.status).toBe(307);
@@ -129,7 +156,7 @@ describe('middleware', () => {
             vi.mocked(getToken).mockResolvedValue(mockToken as never);
 
             const req = new NextRequest('http://localhost:3000/');
-            const response = await middleware(req);
+            const response = await proxy(req);
 
             expect(response).toBeUndefined();
         });
@@ -141,7 +168,7 @@ describe('middleware', () => {
 
             const req = new NextRequest('http://localhost:3000/notebooks');
 
-            const response = await middleware(req);
+            const response = await proxy(req);
 
             expect(response?.status).toBe(307);
             expect(response?.headers.get('location')).toContain('/login');
@@ -151,7 +178,7 @@ describe('middleware', () => {
             // 此测试验证错误处理路径不会崩溃
             // 由于模块缓存，我们在上面的测试中已经验证了错误处理
             // 这里只验证中间件导入成功
-            expect(middleware).toBeDefined();
+            expect(proxy).toBeDefined();
         });
     });
 
@@ -160,7 +187,7 @@ describe('middleware', () => {
             vi.mocked(getToken).mockResolvedValue(null);
 
             const req = new NextRequest('http://localhost:3000/notebooks');
-            await middleware(req);
+            await proxy(req);
 
             expect(getToken).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -176,7 +203,7 @@ describe('middleware', () => {
             vi.mocked(getToken).mockResolvedValue(null);
 
             const req = new NextRequest('http://localhost:3000/notebooks');
-            await middleware(req);
+            await proxy(req);
 
             expect(getToken).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -191,7 +218,7 @@ describe('middleware', () => {
     describe('路径匹配', () => {
         it('中间件配置应该存在', async () => {
             // 验证中间件导出存在
-            const middlewareModule = await import('@/middleware');
+            const middlewareModule = await import('@/proxy');
             expect(middlewareModule.config).toBeDefined();
             expect(middlewareModule.config.matcher).toBeDefined();
             expect(middlewareModule.config.matcher.length).toBeGreaterThan(0);
@@ -201,7 +228,7 @@ describe('middleware', () => {
             vi.mocked(getToken).mockResolvedValue(null);
 
             const req = new NextRequest('http://localhost:3000/');
-            const response = await middleware(req);
+            const response = await proxy(req);
 
             expect(response).not.toBeNull();
             expect(response?.headers.get('location')).toContain('/login');
@@ -211,7 +238,7 @@ describe('middleware', () => {
             vi.mocked(getToken).mockResolvedValue(null);
 
             const req = new NextRequest('http://localhost:3000/notebooks/123/edit');
-            const response = await middleware(req);
+            const response = await proxy(req);
 
             expect(response).not.toBeNull();
             expect(response?.headers.get('location')).toContain('callbackUrl');

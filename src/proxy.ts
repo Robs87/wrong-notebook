@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 import type { NextRequest } from "next/server";
 import { createLogger } from "@/lib/logger";
+import { prisma } from "@/lib/prisma";
 
 const logger = createLogger('middleware');
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
     // Debug logging for middleware
     logger.debug({ method: req.method, path: req.nextUrl.pathname }, 'Processing request');
 
@@ -16,9 +17,16 @@ export async function middleware(req: NextRequest) {
             cookieName: "next-auth.session-token", // Explicitly look for the standardized cookie
         });
 
-        // jwt 回调会在账号被禁用/删除时清空 id。仅有一个可解码的旧 token
-        // 不代表用户仍然有效，必须以服务端确认过的稳定用户 ID 作为认证依据。
-        const isAuth = typeof token?.id === "string" && token.id.length > 0;
+        // Proxy 仅解密 JWT，不会运行 NextAuth 的 jwt callback。必须在这里重新读取
+        // 账号状态，否则禁用/降级前签发的旧 token 仍可通过页面与 /admin 入口。
+        const tokenUserId = typeof token?.id === "string" && token.id.length > 0 ? token.id : null;
+        const freshUser = tokenUserId
+            ? await prisma.user.findUnique({
+                where: { id: tokenUserId },
+                select: { role: true, isActive: true },
+            })
+            : null;
+        const isAuth = Boolean(freshUser?.isActive);
         const isAuthPage = req.nextUrl.pathname.startsWith("/login") || req.nextUrl.pathname.startsWith("/register");
         const isAdminPage = req.nextUrl.pathname.startsWith("/admin");
 
@@ -51,7 +59,7 @@ export async function middleware(req: NextRequest) {
         }
 
         // Admin route protection: only allow users with admin role
-        if (isAdminPage && token?.role !== "admin") {
+        if (isAdminPage && freshUser?.role !== "admin") {
             logger.warn({ userId: token?.id, path: req.nextUrl.pathname }, 'Non-admin user attempting to access admin area');
             return NextResponse.redirect(new URL("/", req.url));
         }

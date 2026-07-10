@@ -8,6 +8,7 @@ import { getMathTagsFromDB, getTagsFromDB } from './tag-service';
 import { createLogger } from '../logger';
 import { normalizeMistakeStatusForSave } from '../mistake-status';
 import { extractResponseText, extractTag, parseJsonLoose, recoverAnalysisFromAnswerText } from './response-parser';
+import { assertTrustedBaseUrl } from '../url-safety';
 
 const logger = createLogger('ai:openai');
 
@@ -51,9 +52,14 @@ export class OpenAIProvider implements AIService {
         const appConfig = getAppConfig();
         this.requestTimeoutMs = appConfig?.timeouts?.analyze || 180000;
 
+        const trustedBaseUrl = assertTrustedBaseUrl(baseURL || 'https://api.openai.com/v1');
+        if (!trustedBaseUrl.ok) {
+            throw new Error(`AI_CONFIG_ERROR: unsafe OpenAI base URL (${trustedBaseUrl.error})`);
+        }
+
         this.openai = new OpenAI({
             apiKey: apiKey,
-            baseURL: baseURL || undefined,
+            baseURL: trustedBaseUrl.origin,
             // OpenAI SDK 的 timeout 触发后会自动 abort 底层请求
             timeout: this.requestTimeoutMs,
             maxRetries: 0,
@@ -63,7 +69,7 @@ export class OpenAIProvider implements AIService {
         });
 
         this.model = config?.model || 'gpt-4o'; // Fallback for safety
-        this.baseURL = baseURL || 'https://api.openai.com/v1';
+        this.baseURL = trustedBaseUrl.origin!;
         this.apiKey = apiKey;
         this.isLongCat = this.baseURL.includes('longcat.chat');
 

@@ -23,6 +23,7 @@ const ORIGINAL = {
     NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET,
     NODE_ENV: process.env.NODE_ENV,
     NEXT_PHASE: process.env.NEXT_PHASE,
+    AUTH_TRUST_HOST: process.env.AUTH_TRUST_HOST,
 };
 
 beforeEach(() => {
@@ -35,6 +36,7 @@ afterEach(() => {
     env.NEXTAUTH_SECRET = ORIGINAL.NEXTAUTH_SECRET;
     env.NODE_ENV = ORIGINAL.NODE_ENV;
     env.NEXT_PHASE = ORIGINAL.NEXT_PHASE;
+    env.AUTH_TRUST_HOST = ORIGINAL.AUTH_TRUST_HOST;
     vi.restoreAllMocks();
 });
 
@@ -67,5 +69,16 @@ describe('NEXTAUTH_SECRET 强度校验', () => {
         env.NODE_ENV = 'production';
         env.NEXTAUTH_SECRET = 'a-very-strong-random-secret-32-bytes!';
         await expect(importAuthFresh()).resolves.toBeDefined();
+    });
+
+    it('只有显式配置 AUTH_TRUST_HOST=true 时才信任 Host 请求头', async () => {
+        env.NODE_ENV = 'development';
+        delete env.AUTH_TRUST_HOST;
+        const disabled = await importAuthFresh();
+        expect(disabled.authOptions.trustHost).toBe(false);
+
+        env.AUTH_TRUST_HOST = 'true';
+        const enabled = await importAuthFresh();
+        expect(enabled.authOptions.trustHost).toBe(true);
     });
 });

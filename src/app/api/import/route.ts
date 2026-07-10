@@ -20,6 +20,18 @@ interface ImportData {
         enrollmentYear: number | null;
         role: string;
     };
+    users?: Array<{
+        id: string;
+        email: string;
+        passwordHash: string;
+        name: string | null;
+        educationStage: string | null;
+        enrollmentYear: number | null;
+        role: string;
+        isActive: boolean;
+        createdAt: string;
+        updatedAt: string;
+    }>;
     subjects: Array<{
         id: string;
         name: string;
@@ -52,6 +64,7 @@ interface ImportData {
         mistakeAnalysis: string | null;
         mistakeStatus: string | null;
         knowledgePoints: string | null;
+        geogebraCommands?: string | null;
         source: string | null;
         errorType: string | null;
         userNotes: string | null;
@@ -80,6 +93,129 @@ interface ImportData {
     }>;
 }
 
+const MAX_IMPORT_BYTES = 50 * 1024 * 1024;
+
+class ImportValidationError extends Error {}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Read the stream with an actual byte ceiling; Content-Length alone is attacker-controlled/optional. */
+async function readLimitedJson(req: Request): Promise<unknown> {
+    const declaredLength = Number(req.headers.get('content-length'));
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_IMPORT_BYTES) {
+        throw new ImportValidationError('Request body too large (max 50MB)');
+    }
+    if (!req.body) throw new ImportValidationError('Request body is required');
+
+    const reader = req.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > MAX_IMPORT_BYTES) {
+            await reader.cancel();
+            throw new ImportValidationError('Request body too large (max 50MB)');
+        }
+        chunks.push(value);
+    }
+
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+    try {
+        return JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+        throw new ImportValidationError('Invalid JSON import data');
+    }
+}
+
+function validateImportData(value: unknown, importAll: boolean): asserts value is ImportData {
+    if (!isRecord(value) || !Number.isInteger(value.version) || !isRecord(value.user)) {
+        throw new ImportValidationError('Invalid import data format');
+    }
+    const arrayFields = ['subjects', 'customTags', 'errorItems', 'reviewSchedules', 'practiceRecords'] as const;
+    for (const field of arrayFields) {
+        if (!Array.isArray(value[field])) throw new ImportValidationError(`Invalid ${field} array`);
+    }
+    if (typeof value.user.id !== 'string' || typeof value.user.email !== 'string') {
+        throw new ImportValidationError('Invalid export owner');
+    }
+
+    for (const [field, entries] of arrayFields.map((field) => [field, value[field]] as const)) {
+        for (const entry of entries as unknown[]) {
+            if (!isRecord(entry) || typeof entry.id !== 'string' || !entry.id) {
+                throw new ImportValidationError(`Invalid item in ${field}`);
+            }
+        }
+    }
+    for (const item of value.errorItems as Array<Record<string, unknown>>) {
+        if (typeof item.userId !== 'string' ||
+            (item.subjectId !== null && item.subjectId !== undefined && typeof item.subjectId !== 'string') ||
+            typeof item.originalImageUrl !== 'string' || !Array.isArray(item.tags) ||
+            item.tags.some((tag) => !isRecord(tag) || typeof tag.id !== 'string' ||
+                typeof tag.name !== 'string' || typeof tag.subject !== 'string')) {
+            throw new ImportValidationError('Invalid error item');
+        }
+    }
+    for (const subject of value.subjects as Array<Record<string, unknown>>) {
+        if (typeof subject.name !== 'string' || typeof subject.userId !== 'string') {
+            throw new ImportValidationError('Invalid subject');
+        }
+    }
+    for (const tag of value.customTags as Array<Record<string, unknown>>) {
+        if (typeof tag.name !== 'string' || typeof tag.subject !== 'string' || typeof tag.userId !== 'string' ||
+            (tag.parentId !== null && tag.parentId !== undefined && typeof tag.parentId !== 'string') ||
+            !Number.isInteger(tag.order)) {
+            throw new ImportValidationError('Invalid custom tag');
+        }
+    }
+    for (const schedule of value.reviewSchedules as Array<Record<string, unknown>>) {
+        if (typeof schedule.errorItemId !== 'string' || typeof schedule.scheduledFor !== 'string') {
+            throw new ImportValidationError('Invalid review schedule');
+        }
+    }
+    for (const record of value.practiceRecords as Array<Record<string, unknown>>) {
+        if (typeof record.userId !== 'string') throw new ImportValidationError('Invalid practice record');
+    }
+
+    if (importAll) {
+        if (value.scope !== 'all' || (value.version as number) < 2 || !Array.isArray(value.users)) {
+            throw new ImportValidationError('Full restore requires a version 2 full backup with users');
+        }
+        const ids = new Set<string>();
+        const emails = new Set<string>();
+        for (const candidate of value.users) {
+            if (!isRecord(candidate) || typeof candidate.id !== 'string' || typeof candidate.email !== 'string' ||
+                typeof candidate.passwordHash !== 'string' || !/^\$2[aby]\$\d{2}\$.{53}$/.test(candidate.passwordHash) ||
+                !['admin', 'user'].includes(String(candidate.role)) || typeof candidate.isActive !== 'boolean') {
+                throw new ImportValidationError('Invalid user in full backup');
+            }
+            const normalizedEmail = candidate.email.trim().toLowerCase();
+            if (!normalizedEmail || ids.has(candidate.id) || emails.has(normalizedEmail)) {
+                throw new ImportValidationError('Duplicate user identity in full backup');
+            }
+            ids.add(candidate.id);
+            emails.add(normalizedEmail);
+        }
+        const references = [
+            ...(value.subjects as Array<Record<string, unknown>>).map((item) => item.userId),
+            ...(value.customTags as Array<Record<string, unknown>>).map((item) => item.userId),
+            ...(value.errorItems as Array<Record<string, unknown>>).map((item) => item.userId),
+            ...(value.practiceRecords as Array<Record<string, unknown>>).map((item) => item.userId),
+        ];
+        if (references.some((id) => typeof id !== 'string' || !ids.has(id))) {
+            throw new ImportValidationError('Backup contains records for an unknown user');
+        }
+    }
+}
+
 /** Validate and parse a date string, returning undefined if invalid */
 function safeParseDate(dateStr: string | undefined | null): Date | undefined {
     if (!dateStr) return undefined;
@@ -89,8 +225,8 @@ function safeParseDate(dateStr: string | undefined | null): Date | undefined {
 
 /** Validate masteryLevel is an integer in range [0, 2] */
 function safeMasteryLevel(val: unknown): number {
-    const n = typeof val === 'number' ? val : parseInt(String(val), 10);
-    if (isNaN(n) || n < 0 || n > 2) return 0;
+    const n = typeof val === 'number' ? val : Number(val);
+    if (!Number.isInteger(n) || n < 0 || n > 2) return 0;
     return n;
 }
 
@@ -118,17 +254,9 @@ export async function POST(req: Request) {
     }
 
     try {
-        const contentLength = req.headers.get('content-length');
-        if (contentLength && parseInt(contentLength, 10) > 50 * 1024 * 1024) {
-            return badRequest("Request body too large (max 50MB)");
-        }
-
-        const body = await req.json() as ImportData;
-
-        // 验证数据格式
-        if (!body.version || !body.user || !Array.isArray(body.errorItems)) {
-            return badRequest("Invalid import data format");
-        }
+        const parsedBody = await readLimitedJson(req);
+        validateImportData(parsedBody, importAll);
+        const body = parsedBody;
 
         // 非管理员模式：验证导出数据属于当前用户
         if (!importAll && body.user.email !== user.email) {
@@ -136,6 +264,8 @@ export async function POST(req: Request) {
         }
 
         const stats = {
+            usersCreated: 0,
+            usersUpdated: 0,
             subjectsCreated: 0,
             tagsCreated: 0,
             errorItemsCreated: 0,
@@ -153,12 +283,49 @@ export async function POST(req: Request) {
 
         // 使用事务确保数据一致性
         await prisma.$transaction(async (tx) => {
+            // 全量恢复先以规范化邮箱建立 source userId -> 当前数据库 userId 映射。
+            // 后续所有租户数据只能通过该映射落库，绝不直接信任备份中的 userId。
+            const userIdMap = new Map<string, string>();
+            if (importAll) {
+                const existingUsers = await tx.user.findMany();
+                const existingByEmail = new Map(existingUsers.map((entry) => [entry.email.toLowerCase(), entry]));
+                for (const sourceUser of body.users!) {
+                    const email = sourceUser.email.trim().toLowerCase();
+                    const userData = {
+                        email,
+                        password: sourceUser.passwordHash,
+                        name: sourceUser.name,
+                        educationStage: sourceUser.educationStage,
+                        enrollmentYear: sourceUser.enrollmentYear,
+                        role: sourceUser.role,
+                        isActive: sourceUser.isActive,
+                    };
+                    const existing = existingByEmail.get(email);
+                    if (existing) {
+                        const updated = await tx.user.update({ where: { id: existing.id }, data: userData });
+                        userIdMap.set(sourceUser.id, updated.id);
+                        stats.usersUpdated++;
+                    } else {
+                        const created = await tx.user.create({ data: userData });
+                        userIdMap.set(sourceUser.id, created.id);
+                        stats.usersCreated++;
+                    }
+                }
+            } else {
+                userIdMap.set(body.user.id, user.id);
+            }
+            const targetUserId = (sourceId: string): string => {
+                const mapped = userIdMap.get(sourceId);
+                if (!mapped) throw new ImportValidationError('Record references an unknown user');
+                return mapped;
+            };
+
             // 1. 导入 subjects
             const subjectIdMap = new Map<string, string>();
             for (const subject of (body.subjects || [])) {
-                const targetUserId = importAll ? subject.userId : user.id;
+                const mappedUserId = importAll ? targetUserId(subject.userId) : user.id;
                 const existing = await tx.subject.findFirst({
-                    where: { name: subject.name, userId: targetUserId },
+                    where: { name: subject.name, userId: mappedUserId },
                 });
                 if (existing) {
                     subjectIdMap.set(subject.id, existing.id);
@@ -166,7 +333,7 @@ export async function POST(req: Request) {
                     const created = await tx.subject.create({
                         data: {
                             name: subject.name,
-                            userId: targetUserId,
+                            userId: mappedUserId,
                         },
                     });
                     subjectIdMap.set(subject.id, created.id);
@@ -192,13 +359,13 @@ export async function POST(req: Request) {
                     );
                     if (hasPendingCustomParent) continue;
 
-                    const targetUserId = importAll ? tag.userId : user.id;
+                    const mappedUserId = importAll ? targetUserId(tag.userId) : user.id;
                     const newParentId = tag.parentId ? tagIdMap.get(tag.parentId) ?? null : null;
                     const existing = await tx.knowledgeTag.findFirst({
                         where: {
                             name: tag.name,
                             subject: tag.subject,
-                            userId: targetUserId,
+                            userId: mappedUserId,
                             parentId: newParentId,
                             isSystem: false,
                         },
@@ -212,7 +379,7 @@ export async function POST(req: Request) {
                                 name: tag.name,
                                 subject: tag.subject,
                                 isSystem: false,
-                                userId: targetUserId,
+                                userId: mappedUserId,
                                 parentId: newParentId,
                                 order: tag.order || 0,
                                 code: tag.code,
@@ -227,7 +394,7 @@ export async function POST(req: Request) {
                 }
 
                 if (!progressed) {
-                    throw new Error('Invalid custom tag hierarchy in import data');
+                    throw new ImportValidationError('Invalid custom tag hierarchy in import data');
                 }
             }
 
@@ -262,14 +429,23 @@ export async function POST(req: Request) {
             // 4. 导入 error items
             const errorItemIdMap = new Map<string, string>();
             for (const item of body.errorItems) {
-                const targetUserId = importAll ? item.userId : user.id;
+                const mappedUserId = importAll ? targetUserId(item.userId) : user.id;
                 const newSubjectId = item.subjectId ? subjectIdMap.get(item.subjectId) : undefined;
+                const sourceSubject = item.subjectId
+                    ? body.subjects.find((subject) => subject.id === item.subjectId)
+                    : undefined;
+                if (item.subjectId && !sourceSubject) {
+                    throw new ImportValidationError('Error item references an unknown subject');
+                }
+                if (sourceSubject && sourceSubject.userId !== item.userId) {
+                    throw new ImportValidationError('Error item references another user\'s subject');
+                }
 
                 // 去重：同一用户 + 同一科目 + 相同题目文本视为重复
                 if (item.questionText) {
                     const existing = await tx.errorItem.findFirst({
                         where: {
-                            userId: targetUserId,
+                            userId: mappedUserId,
                             subjectId: newSubjectId || null,
                             questionText: item.questionText,
                         },
@@ -283,7 +459,7 @@ export async function POST(req: Request) {
 
                 const created = await tx.errorItem.create({
                     data: {
-                        userId: targetUserId,
+                        userId: mappedUserId,
                         subjectId: newSubjectId || undefined,
                         originalImageUrl: item.originalImageUrl || '',
                         ocrText: item.ocrText,
@@ -294,6 +470,7 @@ export async function POST(req: Request) {
                         mistakeAnalysis: item.mistakeAnalysis,
                         mistakeStatus: item.mistakeStatus,
                         knowledgePoints: item.knowledgePoints,
+                        geogebraCommands: item.geogebraCommands,
                         source: item.source,
                         errorType: item.errorType,
                         userNotes: item.userNotes,
@@ -311,6 +488,10 @@ export async function POST(req: Request) {
                     const tagConnections: { id: string }[] = [];
                     for (const tag of item.tags) {
                         if (tagIdMap.has(tag.id)) {
+                            const sourceTag = body.customTags.find((candidate) => candidate.id === tag.id);
+                            if (sourceTag && sourceTag.userId !== item.userId) {
+                                throw new ImportValidationError('Error item references another user\'s custom tag');
+                            }
                             tagConnections.push({ id: tagIdMap.get(tag.id)! });
                         } else {
                             const fallbackTagId = tagNameMap.get(tagIdentityKey(tag.subject, tag.name));
@@ -360,10 +541,10 @@ export async function POST(req: Request) {
 
             // 6. 导入 practice records
             for (const record of (body.practiceRecords || [])) {
-                const targetUserId = importAll ? record.userId : user.id;
+                const mappedUserId = importAll ? targetUserId(record.userId) : user.id;
                 await tx.practiceRecord.create({
                     data: {
-                        userId: targetUserId,
+                        userId: mappedUserId,
                         subject: record.subject,
                         difficulty: record.difficulty,
                         isCorrect: record.isCorrect,
@@ -387,6 +568,9 @@ export async function POST(req: Request) {
             stats,
         });
     } catch (error) {
+        if (error instanceof ImportValidationError) {
+            return badRequest(error.message);
+        }
         logger.error({ error, userId: user.id }, 'Import failed');
         return internalError("Failed to import data");
     }

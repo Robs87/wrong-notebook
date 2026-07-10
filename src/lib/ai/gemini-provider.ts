@@ -7,6 +7,7 @@ import { getMathTagsFromDB, getTagsFromDB } from './tag-service';
 import { createLogger } from '../logger';
 import { normalizeMistakeStatusForSave } from '../mistake-status';
 import { extractTag, parseJsonLoose, recoverAnalysisFromAnswerText } from './response-parser';
+import { assertTrustedBaseUrl } from '../url-safety';
 
 const logger = createLogger('ai:gemini');
 
@@ -33,18 +34,23 @@ export class GeminiProvider implements AIService {
         const appConfig = getAppConfig();
         this.requestTimeoutMs = appConfig?.timeouts?.analyze || 180000;
 
+        const trustedBaseUrl = assertTrustedBaseUrl(baseUrl || 'https://generativelanguage.googleapis.com');
+        if (!trustedBaseUrl.ok) {
+            throw new Error(`AI_CONFIG_ERROR: unsafe Gemini base URL (${trustedBaseUrl.error})`);
+        }
+
         // 使用 httpOptions.baseUrl 来配置自定义 API 地址，避免全局 setDefaultBaseUrls 的竞态条件
         // 参考：@google/genai 的 GoogleGenAIOptions.httpOptions.baseUrl
         this.ai = new GoogleGenAI({
             apiKey,
-            httpOptions: baseUrl ? {
-                baseUrl: baseUrl,
+            httpOptions: {
+                baseUrl: trustedBaseUrl.origin,
                 timeout: this.requestTimeoutMs,
-            } : { timeout: this.requestTimeoutMs },
+            },
         });
 
         this.modelName = config?.model || 'gemini-2.0-flash';
-        this.baseUrl = baseUrl || 'https://generativelanguage.googleapis.com';
+        this.baseUrl = trustedBaseUrl.origin!;
 
         logger.info({
             provider: 'Gemini',

@@ -142,7 +142,7 @@ describe('assertSafeBaseUrl', () => {
         expect((await assertSafeBaseUrl('http://[fe80::1]/', [], false)).ok).toBe(false);
     });
 
-    it('DNS 解析到内网地址时拒绝（mocked）', async () => {
+    it('未显式信任的公网主机也拒绝，不能把一次 DNS 解析当作安全边界', async () => {
         // rebind-attack.example.com → 解析为 10.0.0.1
         const dns = await import('dns');
         vi.spyOn(dns.promises, 'lookup').mockResolvedValue([
@@ -170,9 +170,8 @@ describe('assertSafeBaseUrl', () => {
         await expect(assertSafeBaseUrl('https://token.sensenova.cn/v1')).resolves.toMatchObject({ ok: true });
     });
 
-    it('公网 IPv6 字面量 baseUrl 放行（关闭 DNS 时）', async () => {
-        // 关键修复：公网 IPv6 不再被 isPrivateHost 误杀
+    it('未列入信任清单的公网 IPv6 字面量也拒绝', async () => {
         const r = await assertSafeBaseUrl('https://[2606:4700:4700::1111]/v1', [], false);
-        expect(r.ok).toBe(true);
+        expect(r.ok).toBe(false);
     });
 });

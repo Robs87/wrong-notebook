@@ -45,8 +45,11 @@ async function applySqlitePragmas(): Promise<void> {
     }
 }
 
-// 模块加载时异步应用（fire-and-forget，不阻塞 import）
-applySqlitePragmas();
+// 模块加载时异步应用（fire-and-forget，不阻塞 import）。Next 构建的数据收集阶段
+// 没有运行时 DATABASE_URL，也不应尝试连接数据库；pragma 留到容器启动后执行。
+if (process.env.NEXT_PHASE !== 'phase-production-build') {
+    applySqlitePragmas();
+}
 
 /**
  * 写操作重试包装：捕获 SQLite 写冲突（SQLITE_BUSY / Prisma P2028 事务冲突），

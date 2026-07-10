@@ -7,6 +7,7 @@ import { getMathTagsFromDB, getTagsFromDB } from './tag-service';
 import { createLogger } from '../logger';
 import { normalizeMistakeStatusForSave } from '../mistake-status';
 import { extractResponseText, extractTag, parseJsonLoose, recoverAnalysisFromAnswerText } from './response-parser';
+import { assertTrustedBaseUrl } from '../url-safety';
 
 const logger = createLogger('ai:azure');
 
@@ -48,13 +49,18 @@ export class AzureOpenAIProvider implements AIService {
             throw new Error("AI_AUTH_ERROR: AZURE_OPENAI_DEPLOYMENT is required for Azure OpenAI provider");
         }
 
+        const trustedEndpoint = assertTrustedBaseUrl(endpoint);
+        if (!trustedEndpoint.ok) {
+            throw new Error(`AI_CONFIG_ERROR: unsafe Azure endpoint (${trustedEndpoint.error})`);
+        }
+
         // 读取全局超时配置，防止上游挂起导致请求无限阻塞
         const appConfig = getAppConfig();
         this.requestTimeoutMs = appConfig?.timeouts?.analyze || 180000;
 
         this.client = new AzureOpenAI({
             apiKey: apiKey,
-            endpoint: endpoint,
+            endpoint: trustedEndpoint.origin,
             deployment: deployment,
             apiVersion: config?.apiVersion || '2024-02-15-preview',
             timeout: this.requestTimeoutMs,
@@ -63,7 +69,7 @@ export class AzureOpenAIProvider implements AIService {
 
         this.model = config?.model || deployment;
         this.deployment = deployment;
-        this.endpoint = endpoint;
+        this.endpoint = trustedEndpoint.origin!;
 
         logger.info({
             provider: 'Azure OpenAI',

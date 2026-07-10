@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma"
 import { z } from "zod"
 import { getAppConfig } from "@/lib/config"
 import { Prisma } from "@prisma/client"
+import { findCaseInsensitiveUserId } from "@/lib/user-email"
 
 const userSchema = z.object({
     // 支持标准邮箱和本地邮箱（如 user@localhost）
@@ -36,7 +37,7 @@ export async function POST(req: Request) {
             where: { email }
         })
 
-        if (existingUser) {
+        if (existingUser || await findCaseInsensitiveUserId(email)) {
             return NextResponse.json(
                 { user: null, message: "User with this email already exists" },
                 { status: 409 }

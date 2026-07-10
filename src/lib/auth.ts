@@ -4,6 +4,7 @@ import CredentialsProvider from "next-auth/providers/credentials"
 import { prisma } from "@/lib/prisma"
 import { compare } from "bcryptjs"
 import { createLogger } from "@/lib/logger"
+import { findCaseInsensitiveUserId } from "@/lib/user-email"
 
 const logger = createLogger('auth');
 
@@ -60,7 +61,7 @@ export const authOptions: NextAuthOptionsWithTrustHost = {
     session: {
         strategy: "jwt",
     },
-    trustHost: true,
+    trustHost: process.env.AUTH_TRUST_HOST === 'true',
     pages: {
         signIn: "/login",
     },
@@ -99,11 +100,18 @@ export const authOptions: NextAuthOptionsWithTrustHost = {
                     return null
                 }
 
-                const user = await prisma.user.findUnique({
+                const normalizedEmail = credentials.email.trim().toLowerCase();
+                let user = await prisma.user.findUnique({
                     where: {
-                        email: credentials.email
+                        email: normalizedEmail
                     }
                 })
+
+                // 兼容旧版本曾保存的 Mixed@Example.com；SQLite 唯一索引默认区分大小写。
+                if (!user) {
+                    const legacyId = await findCaseInsensitiveUserId(normalizedEmail);
+                    if (legacyId) user = await prisma.user.findUnique({ where: { id: legacyId } });
+                }
 
                 if (!user) {
                     logger.debug('User not found');
@@ -202,8 +210,16 @@ export const authOptions: NextAuthOptionsWithTrustHost = {
                     return { ...token, role: fresh.role };
                 } catch (error) {
                     logger.error({ error }, 'Failed to refresh user role in jwt callback');
-                    // 查询失败时不升级权限，沿用旧 role（保守策略：避免 DB 抖动导致全员登出）
-                    return token;
+                    // 身份状态无法确认时必须 fail closed。沿用旧 token 会让已禁用/降级账号
+                    // 在数据库故障期间继续保有原权限。
+                    return {
+                        ...token,
+                        id: undefined,
+                        role: undefined,
+                        email: undefined,
+                        name: undefined,
+                        picture: undefined,
+                    };
                 }
             }
             return token

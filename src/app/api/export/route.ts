@@ -33,6 +33,12 @@ export async function GET(req: Request) {
     try {
         const userFilter = exportAll ? {} : { userId: user.id };
 
+        // “全量备份”必须携带所有租户身份，否则其余记录中的 userId 在空库中
+        // 无法恢复，在已有库中还可能错误指向其他用户。密码只以 bcrypt 哈希导出。
+        const users = exportAll
+            ? await prisma.user.findMany()
+            : undefined;
+
         const subjects = await prisma.subject.findMany({
             where: userFilter,
         });
@@ -62,7 +68,7 @@ export async function GET(req: Request) {
         });
 
         const exportData = {
-            version: 1,
+            version: 2,
             exportedAt: new Date().toISOString(),
             scope: exportAll ? 'all' : 'user',
             user: {
@@ -73,6 +79,12 @@ export async function GET(req: Request) {
                 enrollmentYear: user.enrollmentYear,
                 role: user.role,
             },
+            ...(users ? {
+                users: users.map(({ password, ...backupUser }) => ({
+                    ...backupUser,
+                    passwordHash: password,
+                })),
+            } : {}),
             subjects,
             customTags,
             errorItems,
@@ -88,6 +100,7 @@ export async function GET(req: Request) {
             errorItemsCount: errorItems.length,
             reviewSchedulesCount: reviewSchedules.length,
             practiceRecordsCount: practiceRecords.length,
+            usersCount: users?.length,
         }, 'Data export completed');
 
         const jsonString = JSON.stringify(exportData, null, 2);
@@ -99,6 +112,8 @@ export async function GET(req: Request) {
             headers: {
                 'Content-Type': 'application/json; charset=utf-8',
                 'Content-Disposition': `attachment; filename="${filename}"`,
+                // 全量备份包含密码哈希及所有租户数据，禁止浏览器/代理缓存。
+                'Cache-Control': 'no-store, private',
             },
         });
     } catch (error) {

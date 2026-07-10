@@ -14,12 +14,14 @@ const mocks = vi.hoisted(() => ({
         aiProvider: 'gemini',
         allowRegistration: true,
     })) as ReturnType<typeof vi.fn>,
+    queryRaw: vi.fn(),
 }));
 
 // Mock Prisma client
 vi.mock('@/lib/prisma', () => ({
     prisma: {
         user: mocks.mockPrismaUser,
+        $queryRaw: mocks.queryRaw,
     },
 }));
 
@@ -40,6 +42,7 @@ import { GET as GET_STATUS } from '@/app/api/register/status/route';
 describe('/api/register', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.queryRaw.mockResolvedValue([]);
         // Reset config mock to allow registration by default
         mocks.mockGetAppConfig.mockReturnValue({
             aiProvider: 'gemini',
@@ -276,6 +279,21 @@ describe('/api/register', () => {
             expect(mocks.mockPrismaUser.findUnique).toHaveBeenCalledWith({
                 where: { email: 'mixed@example.com' },
             });
+        });
+
+        it('应该拒绝与历史混合大小写邮箱重复的注册', async () => {
+            mocks.mockPrismaUser.findUnique.mockResolvedValue(null);
+            mocks.queryRaw.mockResolvedValue([{ id: 'legacy-user' }]);
+
+            const response = await POST(new Request('http://localhost/api/register', {
+                method: 'POST',
+                body: JSON.stringify({
+                    email: 'mixed@example.com', password: 'password123', name: 'Duplicate',
+                }),
+            }));
+
+            expect(response.status).toBe(409);
+            expect(mocks.mockPrismaUser.create).not.toHaveBeenCalled();
         });
     });
 });

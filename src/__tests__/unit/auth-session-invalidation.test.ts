@@ -57,4 +57,23 @@ describe('NextAuth session invalidation', () => {
             name: undefined,
         }));
     });
+
+    it('jwt 无法从数据库确认账号状态时应该失效，而不是沿用旧权限', async () => {
+        mocks.userFindUnique.mockRejectedValueOnce(new Error('database unavailable'));
+        const jwtCallback = authOptions.callbacks?.jwt;
+
+        const result = await (jwtCallback as CallableFunction)({
+            token: {
+                id: 'old-admin-id',
+                role: 'admin',
+                email: 'admin@example.com',
+            },
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+            id: undefined,
+            role: undefined,
+            email: undefined,
+        }));
+    });
 });

@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
     const tx = {
+        user: {
+            findMany: vi.fn(),
+            create: vi.fn(),
+            update: vi.fn(),
+        },
         subject: {
             findFirst: vi.fn(),
             create: vi.fn(),
@@ -126,6 +131,84 @@ describe('/api/import', () => {
         }));
         expect(mocks.tx.errorItem.update).toHaveBeenNthCalledWith(2, expect.objectContaining({
             data: { tags: { connect: [{ id: physicsTag?.id }] } },
+        }));
+    });
+
+    it('全量导入应该拒绝不含用户映射的旧备份', async () => {
+        mocks.getServerSession.mockResolvedValue({
+            user: { id: 'admin-1', email: 'admin@example.com', role: 'admin' },
+        });
+        mocks.userFindUnique.mockResolvedValue({ id: 'admin-1', email: 'admin@example.com', role: 'admin' });
+
+        const response = await POST(new Request('http://localhost/api/import?all=true', {
+            method: 'POST',
+            body: JSON.stringify({
+                version: 1,
+                scope: 'all',
+                user: { id: 'admin-1', email: 'admin@example.com' },
+                subjects: [], customTags: [], errorItems: [], reviewSchedules: [], practiceRecords: [],
+            }),
+        }));
+
+        expect(response.status).toBe(400);
+        expect(mocks.transaction).not.toHaveBeenCalled();
+    });
+
+    it('全量导入应该先按邮箱映射用户，不能直接信任备份 userId', async () => {
+        mocks.getServerSession.mockResolvedValue({
+            user: { id: 'current-admin', email: 'admin@example.com', role: 'admin' },
+        });
+        mocks.userFindUnique.mockResolvedValue({ id: 'current-admin', email: 'admin@example.com', role: 'admin' });
+        mocks.tx.user.findMany.mockResolvedValue([{ id: 'db-existing', email: 'student@example.com' }]);
+        mocks.tx.user.update.mockResolvedValue({ id: 'db-existing' });
+        mocks.tx.subject.findFirst.mockResolvedValue(null);
+        mocks.tx.subject.create.mockResolvedValue({ id: 'db-subject' });
+
+        const response = await POST(new Request('http://localhost/api/import?all=true', {
+            method: 'POST',
+            body: JSON.stringify({
+                version: 2,
+                scope: 'all',
+                user: { id: 'source-admin', email: 'admin@example.com' },
+                users: [{
+                    id: 'source-user',
+                    email: 'Student@Example.com',
+                    passwordHash: '$2b$12$01234567890123456789012345678901234567890123456789012',
+                    name: 'Student', educationStage: null, enrollmentYear: null,
+                    role: 'user', isActive: true,
+                }],
+                subjects: [{ id: 'source-subject', name: 'Math', userId: 'source-user' }],
+                customTags: [], errorItems: [], reviewSchedules: [], practiceRecords: [],
+            }),
+        }));
+
+        expect(response.status).toBe(200);
+        expect(mocks.tx.subject.create).toHaveBeenCalledWith({
+            data: { name: 'Math', userId: 'db-existing' },
+        });
+    });
+
+    it('masteryLevel 必须是 0 到 2 的整数', async () => {
+        mocks.tx.knowledgeTag.findMany.mockResolvedValue([]);
+        mocks.tx.errorItem.findFirst.mockResolvedValue(null);
+        mocks.tx.errorItem.create.mockResolvedValue({ id: 'created-item' });
+
+        const response = await POST(new Request('http://localhost/api/import', {
+            method: 'POST',
+            body: JSON.stringify({
+                version: 2,
+                user: { id: 'user-1', email: 'user@example.com' },
+                subjects: [], customTags: [], reviewSchedules: [], practiceRecords: [],
+                errorItems: [{
+                    id: 'item', userId: 'user-1', subjectId: null,
+                    originalImageUrl: '', masteryLevel: 1.5, tags: [],
+                }],
+            }),
+        }));
+
+        expect(response.status).toBe(200);
+        expect(mocks.tx.errorItem.create).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ masteryLevel: 0 }),
         }));
     });
 });

@@ -404,9 +404,9 @@ export async function updateAppConfig(newConfig: Partial<AppConfig>): Promise<Ap
         timeouts: { ...currentConfig.timeouts, ...newConfig.timeouts },
     };
 
-    // 先刷新缓存（即便持久化失败，内存配置也保持一致）
-    setCachedConfig(updatedConfig);
+    // 先持久化再发布缓存：失败时调用方收到错误，运行中配置仍与数据库一致。
     await persistConfig(updatedConfig);
+    setCachedConfig(updatedConfig);
     return updatedConfig;
 }
 

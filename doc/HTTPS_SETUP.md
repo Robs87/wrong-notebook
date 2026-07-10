@@ -70,6 +70,7 @@ services:
       - CERT_DOMAIN=YOUR_IP_OR_DOMAIN  # 替换为你的 IP 或域名
       - NEXTAUTH_URL=https://YOUR_IP_OR_DOMAIN
       - NEXTAUTH_SECRET=your_secret_key
+      - ADMIN_PASSWORD=change_me_with_a_strong_password
       - AUTH_TRUST_HOST=true
     volumes:
       - ./certs:/app/certs  # 证书持久化

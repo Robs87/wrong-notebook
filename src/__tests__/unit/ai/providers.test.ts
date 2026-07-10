@@ -53,6 +53,7 @@ import { getAppConfig, getActiveOpenAIConfig } from '@/lib/config';
 describe('AI Provider 初始化', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        process.env.AI_ALLOWED_HOSTS = 'custom-api.example.com';
     });
 
     describe('OpenAI Provider', () => {

@@ -31,6 +31,7 @@ services:
       # 替换为你的实际访问地址
       - NEXTAUTH_URL=https://YOUR_IP_OR_DOMAIN
       - NEXTAUTH_SECRET=your_secret_key_here
+      - ADMIN_PASSWORD=change_me_with_a_strong_password
       - AUTH_TRUST_HOST=true
       
       # === HTTPS 配置 ===

@@ -119,10 +119,9 @@ wrongNotebook/
 │   │   ├── unit/                 # 单元测试
 │   │   ├── integration/          # 集成测试
 │   │   └── setup.ts              # 测试环境配置
-│   └── middleware.ts             # 认证中间件
+│   └── proxy.ts                  # 页面认证代理（含账号状态实时复验）
 ├── prisma/                       # 数据库
 │   ├── schema.prisma             # 完整数据模型
-│   ├── migrations/               # 数据库迁移
 │   ├── migrations/               # 迁移历史
 │   └── dev.db                    # 开发数据库
 ├── config/
@@ -220,11 +219,12 @@ User (id, email, password, name, role, isActive, educationStage, enrollmentYear)
 
 | 层级 | 优先级 | 说明 |
 |------|--------|------|
-| `config/app-config.json` | 最高 | 运行时动态配置 (通过网页设置保存) |
+| 数据库 `AppSetting` | 最高 | 运行时动态配置 (通过网页设置保存) |
+| `config/app-config.json` | 迁移来源 | 仅用于旧版配置迁移与缺失字段恢复 |
 | 环境变量 (.env) | 中 | 静态配置，启动时读取 |
 | `DEFAULT_CONFIG` (代码) | 最低 | 硬编码默认值 |
 
-关键配置项: AI_PROVIDER, GOOGLE_API_KEY, OPENAI_API_KEY, NEXTAUTH_SECRET, LOG_LEVEL 等
+关键配置项: AI_PROVIDER, GOOGLE_API_KEY, OPENAI_API_KEY, NEXTAUTH_SECRET, ADMIN_PASSWORD, LOG_LEVEL 等
 
 ---
 

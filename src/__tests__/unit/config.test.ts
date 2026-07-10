@@ -146,6 +146,17 @@ describe('config module (M5 DB-backed)', () => {
             expect(isEncrypted(parsed.gemini.apiKey)).toBe(true);
             expect(parsed.gemini.apiKey).not.toBe('plain-key-123');
         });
+
+        it('持久化失败时不应该发布未落盘的内存配置', async () => {
+            await importFresh();
+            await loadConfigFromDB();
+            const before = getAppConfig().aiProvider;
+            mockWithWriteRetry.mockRejectedValueOnce(new Error('disk full'));
+
+            await expect(updateAppConfig({ aiProvider: 'azure' })).rejects.toThrow('disk full');
+
+            expect(getAppConfig().aiProvider).toBe(before);
+        });
     });
 
     describe('密钥加密往返', () => {

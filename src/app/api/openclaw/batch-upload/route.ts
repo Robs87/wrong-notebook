@@ -8,6 +8,7 @@ import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { compare } from "bcryptjs";
 import { getErrorMessage, getErrorName, getErrorStack } from "@/lib/error-utils";
 import { compressDataUrl } from "@/lib/image-compress";
+import { timingSafeEqual } from "crypto";
 
 const logger = createLogger('api:openclaw:batch-upload');
 
@@ -221,7 +222,18 @@ export async function POST(req: Request) {
         const requestData = body;
 
         // 根据认证模式选择验证方式
-        if (authMode === 'apikey' && expectedApiKey) {
+        if (authMode === 'apikey') {
+            const configuredUserEmail = process.env.OPENCLAW_API_USER_EMAIL?.trim().toLowerCase();
+            if (!expectedApiKey || !configuredUserEmail) {
+                logger.error('OPENCLAW_AUTH_MODE=apikey requires both API key and bound user email');
+                return createErrorResponse(
+                    'Openclaw API Key 认证未正确配置',
+                    503,
+                    ErrorCode.INTERNAL_ERROR,
+                    'Missing OPENCLAW_INTEGRATION_API_KEY or OPENCLAW_API_USER_EMAIL'
+                );
+            }
+
             // API Key 认证模式
             if (!apiKey) {
                 logger.warn('Missing API key in request');
@@ -233,7 +245,9 @@ export async function POST(req: Request) {
                 );
             }
 
-            if (apiKey !== expectedApiKey) {
+            const supplied = Buffer.from(apiKey);
+            const expected = Buffer.from(expectedApiKey);
+            if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
                 logger.warn('Invalid API key provided');
                 return createErrorResponse(
                     'API密钥无效',
@@ -243,9 +257,11 @@ export async function POST(req: Request) {
                 );
             }
 
-            userEmail = requestData.userEmail;
+            // 一个全局 API key 必须绑定一个明确租户。若信任 body.userEmail，持有 key 的
+            // 调用方可任选目标用户，形成跨租户写入能力。
+            userEmail = configuredUserEmail;
             subjectId = requestData.subjectId;
-        } else {
+        } else if (authMode === 'credentials') {
             // 用户名密码认证模式（默认）
             const { username, password } = requestData;
 
@@ -303,6 +319,13 @@ export async function POST(req: Request) {
             userEmail = user.email;
             subjectId = requestData.subjectId;
             logger.info({ userId: user.id, email: user.email }, 'User authenticated via credentials');
+        } else {
+            return createErrorResponse(
+                '不支持的 Openclaw 认证模式',
+                503,
+                ErrorCode.INTERNAL_ERROR,
+                `Invalid OPENCLAW_AUTH_MODE: ${authMode}`
+            );
         }
 
         // 获取图片数组

@@ -15,7 +15,17 @@ export const DEFAULT_ALLOWED_HOSTS = new Set<string>([
     'apihub.agnes-ai.com',
     'open.bigmodel.cn',
     'token.sensenova.cn',
+    'openai.azure.com',
+    'longcat.chat',
 ]);
+
+/** 运维人员通过环境变量显式信任的额外 AI 网关主机（逗号分隔）。 */
+export function configuredAllowedHosts(): string[] {
+    return (process.env.AI_ALLOWED_HOSTS || '')
+        .split(',')
+        .map((host) => host.trim().toLowerCase())
+        .filter(Boolean);
+}
 
 /**
  * 判断 IPv4 字面量是否属于私有/内部/保留段。
@@ -108,16 +118,15 @@ export interface SafeBaseUrlResult {
 }
 
 /**
- * 校验用户提供的 baseUrl/endpoint 是否安全。
- * @param raw 用户输入（可能含路径）
- * @param allowedHosts 额外允许的主机白名单（除官方默认外，admin 可配置的自建网关）
- * @param checkDns 是否做 DNS 解析校验（默认 true）
+ * 同步验证 URL 是否属于显式信任的出站主机。
+ *
+ * 仅凭“一次 DNS 解析结果是公网”不能防 DNS rebinding：校验和 SDK 真正连接之间
+ * 仍会再次解析。安全边界必须是由部署者控制的主机清单；DNS 检查只是附加防线。
  */
-export async function assertSafeBaseUrl(
+export function assertTrustedBaseUrl(
     raw: string,
-    allowedHosts: Iterable<string> = [],
-    checkDns = true
-): Promise<SafeBaseUrlResult> {
+    allowedHosts: Iterable<string> = []
+): SafeBaseUrlResult {
     if (!raw) return { ok: false, error: 'Empty base URL' };
 
     let parsed: URL;
@@ -131,29 +140,44 @@ export async function assertSafeBaseUrl(
         return { ok: false, error: `Unsupported protocol: ${parsed.protocol}` };
     }
 
-    // URL.hostname 对 IPv6 字面量会带方括号（如 [::1]），统一去除后再判断
-    const host = parsed.hostname.replace(/^\[|]$/g, '');
-    const allowSet = new Set([...DEFAULT_ALLOWED_HOSTS, ...allowedHosts]);
-
-    // 安全原则：私有/内部地址一律拒绝，**即便出现在白名单里也不能放行**
-    // （防止 body 可控的 allowedHosts 绕过私网检查）
+    const host = parsed.hostname.replace(/^\[|]$/g, '').toLowerCase();
     if (isPrivateHost(host)) {
         return { ok: false, error: `Blocked private/internal host: ${host}` };
     }
 
-    // 主机名白名单优先：命中即放行（官方 provider）
+    const allowSet = new Set([
+        ...DEFAULT_ALLOWED_HOSTS,
+        ...configuredAllowedHosts(),
+        ...allowedHosts,
+    ].map((value) => value.toLowerCase()));
     const hostInAllowlist = [...allowSet].some(
-        (h) => host === h || host.endsWith(`.${h}`)
+        (allowed) => host === allowed || host.endsWith(`.${allowed}`)
     );
-
     if (!hostInAllowlist) {
-        // 非白名单主机：还需确认不解析到内网（防 DNS rebinding / 内网域名）
-        if (checkDns && (await resolvesToPrivateHost(host))) {
-            return { ok: false, error: `Host resolves to private address: ${host}` };
-        }
+        return { ok: false, error: `Host is not in AI_ALLOWED_HOSTS: ${host}` };
     }
 
-    // 保留 pathname（如 /v1），只去除 query/hash，避免破坏 OpenAI 默认 baseUrl 的 /v1 路径
     const safeOrigin = `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/+$/, '')}`;
     return { ok: true, origin: safeOrigin };
+}
+
+/**
+ * 校验用户提供的 baseUrl/endpoint 是否安全。
+ * @param raw 用户输入（可能含路径）
+ * @param allowedHosts 额外允许的主机白名单（除官方默认外，admin 可配置的自建网关）
+ * @param checkDns 是否做 DNS 解析校验（默认 true）
+ */
+export async function assertSafeBaseUrl(
+    raw: string,
+    allowedHosts: Iterable<string> = [],
+    checkDns = true
+): Promise<SafeBaseUrlResult> {
+    const trusted = assertTrustedBaseUrl(raw, allowedHosts);
+    if (!trusted.ok) return trusted;
+
+    const host = new URL(trusted.origin!).hostname.replace(/^\[|]$/g, '');
+    if (checkDns && (await resolvesToPrivateHost(host))) {
+        return { ok: false, error: `Host resolves to private address: ${host}` };
+    }
+    return trusted;
 }

@@ -82,6 +82,7 @@ docker compose up -d
 ```bash
 docker run -d --name wrong-notebook \
   -e NEXTAUTH_SECRET="your_secret_key" \
+  -e ADMIN_PASSWORD="your_strong_admin_password" \
   -p 3000:3000 \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/config:/app/config \
@@ -142,6 +143,7 @@ cp .env.example .env
 | :--- | :--- | :--- | :--- |
 | `DATABASE_URL` | 数据库连接地址 | `file:./dev.db` | SQLite 数据库路径 |
 | `NEXTAUTH_SECRET` | Auth 密钥 | 无 | 用于加密 Session，生产环境建议设置,可以使用 openssl rand -base64 32 生成一个随机字符串作为密钥 |
+| `ADMIN_PASSWORD` | 初始管理员密码 | 无 | 新安装必填，至少 12 位且不能使用公开默认值；已修改密码的旧安装不会被覆盖 |
 | `NEXTAUTH_URL` | 访问地址 | `http://your-domain-name:3000` | 部署后的访问地址 |
 | `AUTH_TRUST_HOST` | 信任主机头 | `true` | 设置为 `true` 时自动推断 URL，适合 Docker/PaaS |
 | `LOG_LEVEL` | 日志级别 | `debug` (开发) / `info` (生产) | 可选值：`trace`, `debug`, `info`, `warn`, `error`, `fatal` |
@@ -153,6 +155,7 @@ cp .env.example .env
 | 环境变量 | 描述 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `AI_PROVIDER` | AI 提供商 | `gemini` | 可选 `gemini`、`openai` 或 `azure` |
+| `AI_ALLOWED_HOSTS` | 额外信任的 AI 网关主机 | 无 | 逗号分隔，不含协议/路径；第三方 `BASE_URL` 的主机必须显式列入，防止 SSRF/DNS rebinding |
 
 **Gemini 配置**
 
@@ -184,6 +187,7 @@ cp .env.example .env
 
 ```bash
 npx prisma migrate dev
+export ADMIN_PASSWORD='your-strong-admin-password'
 npx prisma db seed
 ```
 
