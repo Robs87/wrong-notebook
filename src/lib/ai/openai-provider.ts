@@ -265,6 +265,7 @@ export class OpenAIProvider implements AIService {
                 try {
                     const res = await fetch(`${this.baseURL}/chat/completions`, {
                         method: 'POST',
+                        redirect: 'error',
                         headers: {
                             'Authorization': `Bearer ${this.apiKey}`,
                             'Content-Type': 'application/json',

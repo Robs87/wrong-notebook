@@ -135,7 +135,7 @@ describe('/api/register', () => {
 
             const response = await POST(request);
 
-            expect(response.status).toBe(500); // Zod validation error caught as 500
+            expect(response.status).toBe(400);
         });
 
         it('应该拒绝太短的密码', async () => {
@@ -150,7 +150,7 @@ describe('/api/register', () => {
 
             const response = await POST(request);
 
-            expect(response.status).toBe(500); // Zod validation error
+            expect(response.status).toBe(400);
         });
 
         it('应该拒绝空用户名', async () => {
@@ -165,7 +165,7 @@ describe('/api/register', () => {
 
             const response = await POST(request);
 
-            expect(response.status).toBe(500); // Zod validation error
+            expect(response.status).toBe(400);
         });
 
         it('应该在注册禁用时返回 403', async () => {
@@ -238,7 +238,7 @@ describe('/api/register', () => {
             expect(data.allowRegistration).toBe(false);
         });
 
-        it('应该默认允许注册（当配置中未指定时）', async () => {
+        it('配置中未明确开启时应该默认禁止注册', async () => {
             mocks.mockGetAppConfig.mockReturnValue({
                 aiProvider: 'gemini',
                 // 没有 allowRegistration 字段
@@ -248,7 +248,34 @@ describe('/api/register', () => {
             const data = await response.json();
 
             expect(response.status).toBe(200);
-            expect(data.allowRegistration).toBe(true);
+            expect(data.allowRegistration).toBe(false);
+        });
+
+        it('注册邮箱应该去空格并统一为小写', async () => {
+            mocks.mockPrismaUser.findUnique.mockResolvedValue(null);
+            mocks.mockPrismaUser.create.mockResolvedValue({
+                id: 'new-user-id',
+                email: 'mixed@example.com',
+                name: 'Mixed',
+                password: 'hashed_password123',
+            });
+
+            const response = await POST(new Request('http://localhost/api/register', {
+                method: 'POST',
+                body: JSON.stringify({
+                    email: '  Mixed@Example.COM  ',
+                    password: 'password123',
+                    name: 'Mixed',
+                    educationStage: 'junior_high',
+                    enrollmentYear: 2024,
+                }),
+                headers: { 'Content-Type': 'application/json' },
+            }));
+
+            expect(response.status).toBe(201);
+            expect(mocks.mockPrismaUser.findUnique).toHaveBeenCalledWith({
+                where: { email: 'mixed@example.com' },
+            });
         });
     });
 });

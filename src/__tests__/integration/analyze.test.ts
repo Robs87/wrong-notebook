@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     },
     mockSession: {
         user: {
+            id: 'user-123',
             email: 'user@example.com',
             name: 'Test User',
         },
@@ -65,6 +66,30 @@ describe('/api/analyze', () => {
     });
 
     describe('POST /api/analyze (图像分析)', () => {
+        it('应该拒绝已被服务端失效、缺少用户 ID 的 session', async () => {
+            vi.mocked(getServerSession).mockResolvedValueOnce({
+                user: {
+                    id: undefined,
+                    email: 'disabled@example.com',
+                },
+                expires: '2025-12-31',
+            } as never);
+
+            const request = new Request('http://localhost/api/analyze', {
+                method: 'POST',
+                body: JSON.stringify({
+                    imageBase64: 'data:image/png;base64,test...',
+                    language: 'zh',
+                }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await POST(request);
+
+            expect(response.status).toBe(401);
+            expect(mocks.mockAIService.analyzeImage).not.toHaveBeenCalled();
+        });
+
         it('应该成功分析图像', async () => {
             const aiResult = {
                 questionText: '求解 x + 2 = 5',

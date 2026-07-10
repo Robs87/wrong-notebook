@@ -206,7 +206,8 @@ async function main() {
    docker compose up -d
 
 3. 首次登录
-   默认管理员: admin@localhost / 123456（首次登录后请立即修改）
+   在 docker-compose.yml 中设置至少 12 位的 ADMIN_PASSWORD
+   管理员邮箱: admin@localhost
    访问 http://<你的IP>:3000
 
 4. 后续通过 Web UI 修改 AI 配置

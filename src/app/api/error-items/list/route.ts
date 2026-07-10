@@ -20,8 +20,19 @@ export async function GET(req: Request) {
     const tag = searchParams.get("tag");
 
     // 分页参数
-    const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
-    const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(MIN_PAGE_SIZE, parseInt(searchParams.get("pageSize") || String(DEFAULT_PAGE_SIZE), 10)));
+    const parseBoundedInteger = (raw: string | null, fallback: number, min: number, max: number) => {
+        if (raw === null || !/^\d+$/.test(raw)) return fallback;
+        const parsed = Number.parseInt(raw, 10);
+        if (!Number.isSafeInteger(parsed)) return fallback;
+        return Math.min(max, Math.max(min, parsed));
+    };
+    const page = parseBoundedInteger(searchParams.get("page"), 1, 1, Number.MAX_SAFE_INTEGER);
+    const pageSize = parseBoundedInteger(
+        searchParams.get("pageSize"),
+        DEFAULT_PAGE_SIZE,
+        MIN_PAGE_SIZE,
+        MAX_PAGE_SIZE
+    );
 
     try {
         let user;
@@ -262,7 +273,7 @@ function buildGradeFilter(gradeSemester: string): Prisma.ErrorItemWhereInput {
 // 查找章节标签及其所有后代标签的 ID
 async function findChapterDescendantTagIds(chapterName: string, userId: string): Promise<string[]> {
     // 1. 找到章节标签本身 (系统标签或用户自定义标签)
-    const chapterTag = await prisma.knowledgeTag.findFirst({
+    const chapterTags = await prisma.knowledgeTag.findMany({
         where: {
             name: chapterName,
             OR: [
@@ -273,11 +284,11 @@ async function findChapterDescendantTagIds(chapterName: string, userId: string):
         select: { id: true }
     });
 
-    if (!chapterTag) return [];
+    if (chapterTags.length === 0) return [];
 
     // 2. 递归查找所有后代标签
-    const descendantIds: string[] = [chapterTag.id];
-    const queue: string[] = [chapterTag.id];
+    const descendantIds: string[] = chapterTags.map(tag => tag.id);
+    const queue: string[] = [...descendantIds];
 
     while (queue.length > 0) {
         const parentId = queue.shift()!;

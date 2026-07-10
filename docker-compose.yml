@@ -9,6 +9,7 @@ services:
       - "3000:3000"
     environment:
       - NEXTAUTH_SECRET=change_me_with_openssl_rand_base64_32
+      - ADMIN_PASSWORD=change_me_with_a_strong_password
       - AUTH_TRUST_HOST=true
       - TZ=Asia/Shanghai
     volumes:

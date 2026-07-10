@@ -26,10 +26,10 @@ ENV DATABASE_URL="file:/app/prisma/dev.db"
 # Pre-compile runtime scripts FIRST (needed for tag seeding)
 RUN npx tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020
 
-# Initialize database: generate client, run migrations, seed admin user, seed system tags
+# Initialize the packaged database schema and system tags. The admin is deliberately
+# created only at container startup from ADMIN_PASSWORD, never baked into the image.
 RUN npx prisma generate \
     && npx prisma migrate deploy \
-    && npx prisma db seed \
     && node ./dist-scripts/scripts/rebuild-system-tags.js
 
 # Next.js collects completely anonymous telemetry data about general usage.

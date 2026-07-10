@@ -126,6 +126,7 @@ async function createErrorItem(
         throw new Error('SUBJECT_NOT_FOUND_OR_FORBIDDEN');
     }
     const subjectKey = subject ? inferSubjectFromName(subject.name) : null;
+    const effectiveSubjectKey = subjectKey || 'other';
 
     const user = await prisma.user.findUnique({
         where: { id: userId },
@@ -142,6 +143,7 @@ async function createErrorItem(
             let tag = await prisma.knowledgeTag.findFirst({
                 where: {
                     name: tagName,
+                    subject: effectiveSubjectKey,
                     OR: [
                         { isSystem: true },
                         { userId: userId },
@@ -157,7 +159,7 @@ async function createErrorItem(
                 tag = await prisma.knowledgeTag.create({
                     data: {
                         name: tagName,
-                        subject: subjectKey || 'other',
+                        subject: effectiveSubjectKey,
                         isSystem: false,
                         userId: userId,
                         parentId: parentId || undefined,
@@ -276,6 +278,16 @@ export async function POST(req: Request) {
                 );
             }
 
+            if (!user.isActive) {
+                logger.warn({ userId: user.id }, 'Disabled user attempted Openclaw authentication');
+                return createErrorResponse(
+                    '账号已被禁用',
+                    403,
+                    ErrorCode.FORBIDDEN,
+                    'Account is disabled'
+                );
+            }
+
             // 验证密码（使用 bcrypt 比对）
             const isPasswordValid = await compare(password, user.password);
             if (!isPasswordValid) {
@@ -331,6 +343,17 @@ export async function POST(req: Request) {
                 404,
                 ErrorCode.USER_NOT_FOUND,
                 'User not found'
+            );
+        }
+
+        // API Key 模式同样不能绕过后台的账号禁用状态。
+        if (!dbUser.isActive) {
+            logger.warn({ userId: dbUser.id }, 'Disabled user attempted Openclaw upload');
+            return createErrorResponse(
+                '账号已被禁用',
+                403,
+                ErrorCode.FORBIDDEN,
+                'Account is disabled'
             );
         }
 

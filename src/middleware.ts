@@ -16,7 +16,9 @@ export async function middleware(req: NextRequest) {
             cookieName: "next-auth.session-token", // Explicitly look for the standardized cookie
         });
 
-        const isAuth = !!token;
+        // jwt 回调会在账号被禁用/删除时清空 id。仅有一个可解码的旧 token
+        // 不代表用户仍然有效，必须以服务端确认过的稳定用户 ID 作为认证依据。
+        const isAuth = typeof token?.id === "string" && token.id.length > 0;
         const isAuthPage = req.nextUrl.pathname.startsWith("/login") || req.nextUrl.pathname.startsWith("/register");
         const isAdminPage = req.nextUrl.pathname.startsWith("/admin");
 
@@ -55,7 +57,15 @@ export async function middleware(req: NextRequest) {
         }
     } catch (e) {
         logger.error({ error: e }, 'Error processing token');
-        return NextResponse.next();
+        // Token 无法验证时 fail closed，不能因为认证组件异常而放行受保护页面。
+        const isAuthPage = req.nextUrl.pathname.startsWith("/login") || req.nextUrl.pathname.startsWith("/register");
+        if (isAuthPage) return null;
+
+        let from = req.nextUrl.pathname;
+        if (req.nextUrl.search) from += req.nextUrl.search;
+        return NextResponse.redirect(
+            new URL(`/login?callbackUrl=${encodeURIComponent(from)}`, req.url)
+        );
     }
 }
 

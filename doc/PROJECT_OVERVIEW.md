@@ -122,7 +122,7 @@ wrongNotebook/
 │   └── middleware.ts             # 认证中间件
 ├── prisma/                       # 数据库
 │   ├── schema.prisma             # 完整数据模型
-│   ├── seed.ts                   # 种子数据 (管理员 + 标签)
+│   ├── migrations/               # 数据库迁移
 │   ├── migrations/               # 迁移历史
 │   └── dev.db                    # 开发数据库
 ├── config/

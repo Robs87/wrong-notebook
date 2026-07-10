@@ -60,13 +60,14 @@ mkdir -p data config
 # 3. 运行配置引导脚本（交互式填写 AI 提供商信息）
 node scripts/bootstrap-config.js
 
-# 4. 编辑 docker-compose.yml，设置 NEXTAUTH_SECRET
-#    用 openssl rand -base64 32 生成随机值
+# 4. 编辑 docker-compose.yml
+#    - NEXTAUTH_SECRET：用 openssl rand -base64 32 生成
+#    - ADMIN_PASSWORD：设置至少 12 位且非公开默认值的管理员初始密码
 
 # 5. 启动容器
 docker compose up -d
 
-# 6. 默认管理员 admin@localhost / 123456
+# 6. 使用 admin@localhost / 你设置的 ADMIN_PASSWORD 登录
 #    访问 http://<你的IP>:3000 登录
 ```
 
@@ -188,9 +189,7 @@ npx prisma db seed
 
 #### 6. 管理员账户
 
-默认管理员账户：
-- **邮箱**: `admin@localhost`
-- **密码**: `123456`
+初始化数据库前必须设置 `ADMIN_PASSWORD`（至少 12 位且不能使用公开默认值）。管理员邮箱为 `admin@localhost`。已经修改过管理员密码的旧安装不会被启动脚本覆盖；仍使用历史默认口令的安装会要求通过 `ADMIN_PASSWORD` 完成轮换后才启动。
 
 > 管理员登录后，可在“设置” -> “用户管理”中管理系统用户。
 
@@ -257,7 +256,7 @@ npm run dev
   ```
   示例:  
   ```bash
-  node scripts/reset-password.js user@example.com 123456 
+  node scripts/reset-password.js user@example.com 'new-strong-password'
   ```
 
 ## 📄 许可证

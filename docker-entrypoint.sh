@@ -88,18 +88,18 @@ if [ -f "$VERSION_FILE" ]; then
     PREVIOUS_VERSION=$(cat "$VERSION_FILE")
 fi
 
-# Run migrations to ensure DB schema is available and up to date.
+# Run migrations to ensure DB schema is available and up to date. A partially migrated
+# database is not a safe runtime state, so failures are fatal under `set -e`.
 echo "[Entrypoint] Running database migrations to sync schema..."
-cd /app && $PRISMA_BIN migrate deploy --schema=./prisma/schema.prisma && {
-    echo "[Entrypoint] Migrations completed successfully."
-} || echo "[Entrypoint] Migration failed or no pending migrations."
+cd /app
+$PRISMA_BIN migrate deploy --schema=./prisma/schema.prisma
+echo "[Entrypoint] Migrations completed successfully."
 
 # Always run seed after migrations to ensure admin user has correct role/isActive
 # (migration may have reset role to default 'user' for existing installs)
 echo "[Entrypoint] Ensuring admin user exists with correct role..."
-cd /app && node "$SEED_ADMIN_SCRIPT" && {
-    echo "[Entrypoint] Admin seed completed successfully."
-} || echo "[Entrypoint] Admin seed failed (non-fatal, continuing...)."
+node "$SEED_ADMIN_SCRIPT"
+echo "[Entrypoint] Admin seed completed successfully."
 touch "$SEED_MARKER" 2>/dev/null
 
 # Check if version changed - rebuild system tags automatically

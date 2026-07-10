@@ -21,7 +21,7 @@ export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
 
     // 认证检查
-    if (!session) {
+    if (!session?.user?.id) {
         logger.warn('Unauthorized access attempt');
         return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }

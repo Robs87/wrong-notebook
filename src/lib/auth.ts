@@ -151,7 +151,15 @@ export const authOptions: NextAuthOptionsWithTrustHost = {
         async session({ session, token }) {
             logger.debug({ userId: token.id }, 'Session callback');
             // token.id 为 undefined 表示 jwt 回调已判定账号被禁用/删除，
-            // 此时返回的 session 不带有效用户身份，下游所有 requireSession/userId 检查会判为未登录。
+            // 此时必须移除整个 user，而不是只留下一个 id=undefined、仍带 email 的对象。
+            // 否则只检查 session.user/email 的旧路由仍会把失效账号当作已登录，
+            // 而 Prisma 还会忽略 where 中的 undefined userId，形成跨租户读取风险。
+            if (!token.id) {
+                return {
+                    ...session,
+                    user: undefined,
+                };
+            }
             return {
                 ...session,
                 user: {
@@ -179,9 +187,16 @@ export const authOptions: NextAuthOptionsWithTrustHost = {
                         select: { role: true, isActive: true },
                     });
                     if (!fresh || !fresh.isActive) {
-                        // 账号被删除或禁用：清空关键声明，session 回调将得到无 role 的 token，等同登出
+                        // 账号被删除或禁用：清空身份声明，session 回调会移除整个 user。
                         logger.warn({ userId: token.id }, 'User disabled or removed, invalidating session');
-                        const invalidated = { ...token, id: undefined, role: undefined } as unknown as typeof token;
+                        const invalidated = {
+                            ...token,
+                            id: undefined,
+                            role: undefined,
+                            email: undefined,
+                            name: undefined,
+                            picture: undefined,
+                        };
                         return invalidated;
                     }
                     return { ...token, role: fresh.role };

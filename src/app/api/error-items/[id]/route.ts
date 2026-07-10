@@ -7,6 +7,7 @@ import { unauthorized, forbidden, notFound, internalError } from "@/lib/api-erro
 import { createLogger } from "@/lib/logger";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
+import { inferSubjectFromName } from "@/lib/knowledge-tags";
 
 const logger = createLogger('api:error-items:id');
 
@@ -99,13 +100,20 @@ export async function PUT(
         if (analysis !== undefined) updateData.analysis = analysis;
         if (wrongAnswerText !== undefined) updateData.wrongAnswerText = wrongAnswerText || null;
         if (mistakeAnalysis !== undefined) updateData.mistakeAnalysis = mistakeAnalysis || null;
+        let effectiveSubjectName = errorItem.subject?.name ?? null;
         if (subjectId !== undefined) {
-            // 验证目标错题本存在且属于该用户
-            const targetSubject = await prisma.subject.findUnique({ where: { id: subjectId } });
-            if (!targetSubject || targetSubject.userId !== user.id) {
-                return forbidden("Not authorized to move to this notebook");
+            if (subjectId === "") {
+                updateData.subject = { disconnect: true };
+                effectiveSubjectName = null;
+            } else {
+                // 验证目标错题本存在且属于该用户
+                const targetSubject = await prisma.subject.findUnique({ where: { id: subjectId } });
+                if (!targetSubject || targetSubject.userId !== user.id) {
+                    return forbidden("Not authorized to move to this notebook");
+                }
+                updateData.subject = { connect: { id: subjectId } };
+                effectiveSubjectName = targetSubject.name;
             }
-            updateData.subject = subjectId === "" ? { disconnect: true } : { connect: { id: subjectId } };
         }
         if (mistakeStatus !== undefined || wrongAnswerText !== undefined || mistakeAnalysis !== undefined) {
             const nextWrongAnswerText = wrongAnswerText !== undefined ? wrongAnswerText : errorItem.wrongAnswerText;
@@ -125,19 +133,15 @@ export async function PUT(
                     : [];
 
             // 推断学科
-            const subjectKey = errorItem.subject?.name?.toLowerCase().includes('math') ||
-                errorItem.subject?.name?.includes('数学')
-                ? 'math'
-                : errorItem.subject?.name?.toLowerCase().includes('english') ||
-                    errorItem.subject?.name?.includes('英语')
-                    ? 'english'
-                    : 'other';
+            // 同一次请求可能先移动错题本再更新标签，标签必须使用目标学科，不能沿用旧学科。
+            const subjectKey = inferSubjectFromName(effectiveSubjectName) || 'other';
 
             const tagConnections: { id: string }[] = [];
             for (const tagName of tagNames) {
                 let tag = await prisma.knowledgeTag.findFirst({
                     where: {
                         name: tagName,
+                        subject: subjectKey,
                         OR: [
                             { isSystem: true },
                             { userId: user.id },

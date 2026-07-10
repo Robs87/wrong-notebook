@@ -4,7 +4,22 @@ import { describe, it, expect, vi } from 'vitest';
 const require = createRequire(import.meta.url);
 
 describe('seed-admin docker helper', () => {
-    it('creates the default admin user when it does not exist', async () => {
+    it('requires an explicit admin password when the admin does not exist', async () => {
+        const prisma = {
+            user: {
+                findUnique: vi.fn().mockResolvedValue(null),
+                create: vi.fn(),
+                update: vi.fn(),
+            },
+        };
+        const { seedAdmin } = require('../../../../scripts/seed-admin.js');
+
+        await expect(seedAdmin({ prisma, hash: vi.fn(), adminPassword: undefined }))
+            .rejects.toThrow(/ADMIN_PASSWORD/);
+        expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it('creates the admin with the explicitly configured strong password', async () => {
         const createdUsers: unknown[] = [];
         const prisma = {
             user: {
@@ -19,10 +34,14 @@ describe('seed-admin docker helper', () => {
         const hash = vi.fn().mockResolvedValue('hashed-password');
         const { seedAdmin } = require('../../../../scripts/seed-admin.js');
 
-        const result = await seedAdmin({ prisma, hash });
+        const result = await seedAdmin({
+            prisma,
+            hash,
+            adminPassword: 'a-strong-initial-admin-password',
+        });
 
         expect(result).toEqual({ action: 'created', email: 'admin@localhost' });
-        expect(hash).toHaveBeenCalledWith('123456', 12);
+        expect(hash).toHaveBeenCalledWith('a-strong-initial-admin-password', 12);
         expect(prisma.user.create).toHaveBeenCalledWith({
             data: {
                 email: 'admin@localhost',
@@ -35,6 +54,36 @@ describe('seed-admin docker helper', () => {
             },
         });
         expect(createdUsers).toHaveLength(1);
+    });
+
+    it('rotates an existing legacy default password before allowing startup', async () => {
+        const prisma = {
+            user: {
+                findUnique: vi.fn().mockResolvedValue({
+                    email: 'admin@localhost',
+                    password: 'legacy-default-hash',
+                    educationStage: 'junior_high',
+                    enrollmentYear: 2025,
+                }),
+                create: vi.fn(),
+                update: vi.fn().mockResolvedValue({ email: 'admin@localhost' }),
+            },
+        };
+        const hash = vi.fn().mockResolvedValue('new-secure-hash');
+        const compare = vi.fn().mockResolvedValue(true);
+        const { seedAdmin } = require('../../../../scripts/seed-admin.js');
+
+        await seedAdmin({
+            prisma,
+            hash,
+            compare,
+            adminPassword: 'a-strong-rotated-admin-password',
+        });
+
+        expect(compare).toHaveBeenCalledWith('123456', 'legacy-default-hash');
+        expect(prisma.user.update).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ password: 'new-secure-hash' }),
+        }));
     });
 
     it('updates default education fields when the admin user already exists', async () => {

@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getAppConfig, updateAppConfig } from "@/lib/config";
-import { forbidden, internalError, unauthorized } from "@/lib/api-errors";
+import { badRequest, forbidden, internalError, unauthorized } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { OpenAIInstance } from "@/types/api";
+import { assertSafeBaseUrl, DEFAULT_ALLOWED_HOSTS } from "@/lib/url-safety";
 
 const logger = createLogger('api:settings');
 
@@ -99,6 +100,28 @@ export async function POST(req: Request) {
             body.azure.apiKey = currentConfig.azure?.apiKey;
         }
 
+        // 保存时校验真实运行配置，不能只在“测试连接/列模型”接口校验，
+        // 否则管理员保存私网地址后，analyze/reanswer 等业务路径仍会形成 SSRF。
+        const configuredUrls: Array<{ label: string; value?: unknown }> = [
+            ...(Array.isArray(body.openai?.instances)
+                ? body.openai.instances.map((instance: OpenAIInstance) => ({
+                    label: `OpenAI instance ${instance.id}`,
+                    value: instance.baseUrl,
+                }))
+                : []),
+            { label: 'Gemini base URL', value: body.gemini?.baseUrl },
+            { label: 'Azure endpoint', value: body.azure?.endpoint },
+        ];
+
+        for (const candidate of configuredUrls) {
+            if (typeof candidate.value !== 'string' || !candidate.value.trim()) continue;
+            const safe = await assertSafeBaseUrl(candidate.value, DEFAULT_ALLOWED_HOSTS);
+            if (!safe.ok) {
+                logger.warn({ label: candidate.label, reason: safe.error }, 'Blocked unsafe AI endpoint');
+                return badRequest(`${candidate.label} is unsafe or points to a private network`);
+            }
+        }
+
         const updatedConfig = await updateAppConfig(body);
         return NextResponse.json(sanitizeConfig(updatedConfig, true));
     } catch (error) {
@@ -106,4 +129,3 @@ export async function POST(req: Request) {
         return internalError("Failed to update settings");
     }
 }
-

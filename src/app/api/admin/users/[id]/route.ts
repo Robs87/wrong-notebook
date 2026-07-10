@@ -24,7 +24,7 @@ export async function PATCH(
         const { isActive } = body
 
         // Prevent disabling self
-        if (id === session?.user.id) {
+        if (id === session.user.id) {
             return badRequest("Cannot disable your own account")
         }
 
@@ -66,7 +66,7 @@ export async function DELETE(
 
     try {
         // Prevent deleting self
-        if (id === session?.user.id) {
+        if (id === session.user.id) {
             return badRequest("Cannot delete your own account")
         }
 

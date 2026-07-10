@@ -88,6 +88,8 @@ jobs:
       DATABASE_URL: "file:./e2e.db"
       NEXTAUTH_SECRET: "ci-secret-value-123456"
       NEXTAUTH_URL: "http://127.0.0.1:3000"
+      ADMIN_PASSWORD: "123456"
+      ADMIN_PASSWORD_ALLOW_WEAK: "true"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

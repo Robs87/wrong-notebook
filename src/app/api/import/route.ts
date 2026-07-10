@@ -175,37 +175,59 @@ export async function POST(req: Request) {
             }
 
             // 2. 导入 custom tags
+            // 标签的领域身份不是名称本身，而是 user + subject + parent + name。
+            // 按父级依赖顺序处理，避免导出顺序恰好“子在父前”时丢失层级。
             const tagIdMap = new Map<string, string>();
-            for (const tag of (body.customTags || [])) {
-                const targetUserId = importAll ? tag.userId : user.id;
-                const existing = await tx.knowledgeTag.findFirst({
-                    where: {
-                        name: tag.name,
-                        userId: targetUserId,
-                        isSystem: false,
-                    },
-                });
-                if (existing) {
-                    tagIdMap.set(tag.id, existing.id);
-                } else {
-                    let newParentId: string | undefined;
-                    if (tag.parentId && tagIdMap.has(tag.parentId)) {
-                        newParentId = tagIdMap.get(tag.parentId);
-                    }
+            const customTags = body.customTags || [];
+            const customTagIds = new Set(customTags.map(tag => tag.id));
+            const pendingTags = [...customTags];
 
-                    const created = await tx.knowledgeTag.create({
-                        data: {
+            while (pendingTags.length > 0) {
+                let progressed = false;
+
+                for (let index = pendingTags.length - 1; index >= 0; index--) {
+                    const tag = pendingTags[index];
+                    const hasPendingCustomParent = Boolean(
+                        tag.parentId && customTagIds.has(tag.parentId) && !tagIdMap.has(tag.parentId)
+                    );
+                    if (hasPendingCustomParent) continue;
+
+                    const targetUserId = importAll ? tag.userId : user.id;
+                    const newParentId = tag.parentId ? tagIdMap.get(tag.parentId) ?? null : null;
+                    const existing = await tx.knowledgeTag.findFirst({
+                        where: {
                             name: tag.name,
                             subject: tag.subject,
-                            isSystem: false,
                             userId: targetUserId,
                             parentId: newParentId,
-                            order: tag.order || 0,
-                            code: tag.code,
+                            isSystem: false,
                         },
                     });
-                    tagIdMap.set(tag.id, created.id);
-                    stats.tagsCreated++;
+
+                    if (existing) {
+                        tagIdMap.set(tag.id, existing.id);
+                    } else {
+                        const created = await tx.knowledgeTag.create({
+                            data: {
+                                name: tag.name,
+                                subject: tag.subject,
+                                isSystem: false,
+                                userId: targetUserId,
+                                parentId: newParentId,
+                                order: tag.order || 0,
+                                code: tag.code,
+                            },
+                        });
+                        tagIdMap.set(tag.id, created.id);
+                        stats.tagsCreated++;
+                    }
+
+                    pendingTags.splice(index, 1);
+                    progressed = true;
+                }
+
+                if (!progressed) {
+                    throw new Error('Invalid custom tag hierarchy in import data');
                 }
             }
 
@@ -229,9 +251,11 @@ export async function POST(req: Request) {
                 },
             });
             const tagNameMap = new Map<string, string>();
+            const tagIdentityKey = (subject: string, name: string) => `${subject}\u0000${name}`;
             for (const tag of preloadedTags) {
-                if (!tagNameMap.has(tag.name) || (!importAll && tag.userId === user.id)) {
-                    tagNameMap.set(tag.name, tag.id);
+                const key = tagIdentityKey(tag.subject, tag.name);
+                if (!tagNameMap.has(key) || (!importAll && tag.userId === user.id)) {
+                    tagNameMap.set(key, tag.id);
                 }
             }
 
@@ -288,8 +312,9 @@ export async function POST(req: Request) {
                     for (const tag of item.tags) {
                         if (tagIdMap.has(tag.id)) {
                             tagConnections.push({ id: tagIdMap.get(tag.id)! });
-                        } else if (tagNameMap.has(tag.name)) {
-                            tagConnections.push({ id: tagNameMap.get(tag.name)! });
+                        } else {
+                            const fallbackTagId = tagNameMap.get(tagIdentityKey(tag.subject, tag.name));
+                            if (fallbackTagId) tagConnections.push({ id: fallbackTagId });
                         }
                     }
 

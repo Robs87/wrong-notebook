@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
     },
     mockPrismaKnowledgeTag: {
         findFirst: vi.fn(),
+        findMany: vi.fn(),
         create: vi.fn(),
     },
     mockPrismaSubject: {
@@ -478,6 +479,65 @@ describe('/api/error-items', () => {
             expect(response.status).toBe(404);
             expect(data.message).toBe('Item not found');
         });
+
+        it('移动错题并更新知识点时应该按目标错题本学科匹配标签', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({
+                id: 'error-item-1',
+                userId: 'user-123',
+                gradeSemester: '初二上',
+                subject: { id: 'old-subject', name: '数学' },
+            });
+            mocks.mockPrismaSubject.findUnique.mockResolvedValue({
+                id: 'physics-subject',
+                name: '物理',
+                userId: 'user-123',
+            });
+            mocks.mockPrismaKnowledgeTag.findFirst.mockResolvedValue({
+                id: 'physics-force-tag',
+                name: '力学',
+                subject: 'physics',
+                isSystem: true,
+            });
+            mocks.mockPrismaErrorItem.update.mockResolvedValue({ id: 'error-item-1' });
+
+            const response = await PUT(new Request('http://localhost/api/error-items/error-item-1', {
+                method: 'PUT',
+                body: JSON.stringify({
+                    subjectId: 'physics-subject',
+                    knowledgePoints: ['力学'],
+                }),
+                headers: { 'Content-Type': 'application/json' },
+            }), { params: Promise.resolve({ id: 'error-item-1' }) });
+
+            expect(response.status).toBe(200);
+            expect(mocks.mockPrismaKnowledgeTag.findFirst).toHaveBeenCalledWith({
+                where: expect.objectContaining({
+                    name: '力学',
+                    subject: 'physics',
+                }),
+            });
+        });
+
+        it('应该允许把错题移出错题本', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({
+                id: 'error-item-1',
+                userId: 'user-123',
+                subject: { id: 'old-subject', name: '数学' },
+            });
+            mocks.mockPrismaErrorItem.update.mockResolvedValue({ id: 'error-item-1', subjectId: null });
+
+            const response = await PUT(new Request('http://localhost/api/error-items/error-item-1', {
+                method: 'PUT',
+                body: JSON.stringify({ subjectId: '' }),
+                headers: { 'Content-Type': 'application/json' },
+            }), { params: Promise.resolve({ id: 'error-item-1' }) });
+
+            expect(response.status).toBe(200);
+            expect(mocks.mockPrismaSubject.findUnique).not.toHaveBeenCalled();
+            expect(mocks.mockPrismaErrorItem.update).toHaveBeenCalledWith(expect.objectContaining({
+                data: expect.objectContaining({ subject: { disconnect: true } }),
+            }));
+        });
     });
 
     describe('GET /api/error-items/list (获取错题列表)', () => {
@@ -499,6 +559,24 @@ describe('/api/error-items', () => {
             expect(data.page).toBe(1);
             expect(data.pageSize).toBe(18);
             expect(data.totalPages).toBe(1);
+        });
+
+        it('非法分页参数应该回退到安全默认值', async () => {
+            mocks.mockPrismaErrorItem.count.mockResolvedValue(0);
+            mocks.mockPrismaErrorItem.findMany.mockResolvedValue([]);
+
+            const response = await GET_LIST(new Request(
+                'http://localhost/api/error-items/list?page=not-a-number&pageSize=NaN'
+            ));
+            const data = await response.json();
+
+            expect(response.status).toBe(200);
+            expect(data.page).toBe(1);
+            expect(data.pageSize).toBe(18);
+            expect(mocks.mockPrismaErrorItem.findMany).toHaveBeenCalledWith(expect.objectContaining({
+                skip: 0,
+                take: 18,
+            }));
         });
 
         it('应该支持按科目筛选', async () => {

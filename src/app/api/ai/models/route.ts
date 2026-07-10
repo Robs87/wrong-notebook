@@ -27,6 +27,7 @@ async function fetchGeminiModels(apiKey: string, baseUrl: string): Promise<Model
     const url = `${baseUrl}/v1beta/models`;
 
     const response = await fetch(url, {
+        redirect: 'error',
         headers: {
             'Content-Type': 'application/json',
             // Gemini 的 key 通过 header 传递，避免出现在 URL/日志里
@@ -58,6 +59,7 @@ async function fetchOpenAIModels(apiKey: string, baseUrl: string): Promise<Model
     const url = `${baseUrl}/models`;
 
     const response = await fetch(url, {
+        redirect: 'error',
         headers: {
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json',

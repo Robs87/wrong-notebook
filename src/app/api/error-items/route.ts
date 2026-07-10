@@ -132,6 +132,7 @@ export async function POST(req: Request) {
                 let tag = await prisma.knowledgeTag.findFirst({
                     where: {
                         name: tagName,
+                        subject: subjectKey,
                         OR: [
                             { isSystem: true },
                             { userId: user.id },

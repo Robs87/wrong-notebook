@@ -35,6 +35,11 @@ const mocks = vi.hoisted(() => ({
         aiProvider: config.aiProvider || 'gemini',
     })),
     mockGetServerSession: vi.fn(),
+    mockAssertSafeBaseUrl: vi.fn(async (url: string) => (
+        url.includes('127.0.0.1')
+            ? { ok: false, error: 'Blocked private/internal host' }
+            : { ok: true, origin: url }
+    )),
 }));
 
 // Mock config module
@@ -49,6 +54,11 @@ vi.mock('next-auth', () => ({
 
 vi.mock('@/lib/auth', () => ({
     authOptions: {},
+}));
+
+vi.mock('@/lib/url-safety', () => ({
+    assertSafeBaseUrl: mocks.mockAssertSafeBaseUrl,
+    DEFAULT_ALLOWED_HOSTS: new Set<string>(),
 }));
 
 // Import after mocks
@@ -139,6 +149,29 @@ describe('/api/settings', () => {
             const response = await POST(request);
 
             expect(response.status).toBe(403);
+            expect(mocks.mockUpdateAppConfig).not.toHaveBeenCalled();
+        });
+
+        it('管理员也不能保存指向私网的 AI 服务地址', async () => {
+            const request = new Request('http://localhost/api/settings', {
+                method: 'POST',
+                body: JSON.stringify({
+                    openai: {
+                        instances: [{
+                            id: 'private-instance',
+                            name: 'Private',
+                            apiKey: 'sk-test',
+                            baseUrl: 'http://127.0.0.1:8080/v1',
+                            model: 'test-model',
+                        }],
+                    },
+                }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await POST(request);
+
+            expect(response.status).toBe(400);
             expect(mocks.mockUpdateAppConfig).not.toHaveBeenCalled();
         });
 
