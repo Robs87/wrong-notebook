@@ -36,7 +36,8 @@ test('Admin can configure OpenAI settings with multi-instance support', async ({
     // 6. Fill instance configuration
     const instanceName = '智谱 GLM-4V';
     const apiKey = 'sk-aaa';
-    const baseURL = 'https://new.xxx.net/v1';
+    // 使用受信任的官方端点：生产代码会拒绝未在 AI_ALLOWED_HOSTS 中声明的任意网关。
+    const baseURL = 'https://api.openai.com/v1';
     const modelName = 'claude-haiku-4.5';
 
     // Instance Name Input - use the actual placeholder from the component

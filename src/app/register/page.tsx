@@ -163,7 +163,7 @@ export default function RegisterPage() {
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
                                     required
-                                    minLength={6}
+                                    minLength={8}
                                     className="pr-10"
                                 />
                                 <Button
@@ -194,7 +194,7 @@ export default function RegisterPage() {
                                     value={confirmPassword}
                                     onChange={(e) => setConfirmPassword(e.target.value)}
                                     required
-                                    minLength={6}
+                                    minLength={8}
                                     className="pr-10"
                                 />
                                 <Button

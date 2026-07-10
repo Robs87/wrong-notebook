@@ -9,7 +9,8 @@ test.describe('Authentication Flow', () => {
         const user = {
             name: 'jason',
             email: 'jason@qq.com',
-            password: '123456',
+            // 注册接口要求至少 8 位密码。
+            password: 'password123',
             stage: 'junior_high',
             year: '2024' // 使用当前年份确保有效
         };
