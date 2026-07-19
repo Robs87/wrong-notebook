@@ -42,7 +42,9 @@ interface SubjectPrompts {
 }
 
 // 一建涉及的科目（与 bootstrap-config.js 保持一致）
-const YIJIAN_SUBJECTS = ['一建管理', '一建经济'];
+// 一建考试共 4 个科目，analyze 提示词内置"四科自适应策略"，AI 会按科目自动
+// 切换诊断重点，因此四科共用同一套 snippet 模板，无需逐科定制。
+const YIJIAN_SUBJECTS = ['一建管理', '一建经济', '一建法规', '一建实务'];
 
 /**
  * 从镜像 snippet 构造权威 bySubject 模板。
