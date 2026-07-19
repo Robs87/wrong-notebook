@@ -10,6 +10,7 @@ VERSION_FILE="/app/data/.app_version"
 PRISMA_BIN="node /app/node_modules/prisma/build/index.js"
 SEED_ADMIN_SCRIPT="/app/dist-scripts/scripts/seed-admin.js"
 REBUILD_TAGS_SCRIPT="/app/dist-scripts/scripts/rebuild-system-tags.js"
+SYNC_YIJIAN_SCRIPT="/app/dist-scripts/scripts/sync-yijian-prompts.js"
 
 # Get current app version from package.json
 CURRENT_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "unknown")
@@ -109,6 +110,17 @@ if [ "$PREVIOUS_VERSION" != "$CURRENT_VERSION" ]; then
     cd /app && node "$REBUILD_TAGS_SCRIPT" && {
         echo "[Entrypoint] System tags rebuilt successfully."
     } || echo "[Entrypoint] Tag rebuild failed (non-fatal, continuing...)."
+
+    # Sync 一建 prompts to bySubject（幂等）：
+    #   - 方式二新用户（纯拉镜像未跑 bootstrap）：注入一建提示词
+    #   - 老用户：升级 bySubject 到镜像内权威版本
+    #   - 已一致：跳过。只碰 bySubject 三模板，密钥字段字节不动。
+    if [ -f "$SYNC_YIJIAN_SCRIPT" ]; then
+        echo "[Entrypoint] Syncing 一建 prompts (idempotent)..."
+        node "$SYNC_YIJIAN_SCRIPT" && {
+            echo "[Entrypoint] 一建 prompts synced successfully."
+        } || echo "[Entrypoint] 一建 prompt sync failed (non-fatal, continuing...)."
+    fi
     # Update version marker
     echo "$CURRENT_VERSION" > "$VERSION_FILE"
 fi
