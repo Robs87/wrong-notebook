@@ -161,14 +161,15 @@ async function main() {
   // ========================
   console.log('\n🔄 注入一建提示词...');
   config.prompts.bySubject = {};
-  for (const subject of ['一建管理', '一建经济']) {
+  // 一建 4 科共用同一套 snippet 模板（analyze 内置"四科自适应策略"，AI 自动按科目切换诊断重点）
+  for (const subject of ['一建管理', '一建经济', '一建法规', '一建实务']) {
     config.prompts.bySubject[subject] = {
       analyze: promptData.analyze,
       similar: promptData.similar,
       reanswer: promptData.reanswer,
     };
   }
-  console.log('✅ 已注入 2 个科目的自定义提示词');
+  console.log('✅ 已注入 4 个科目的自定义提示词');
 
   // ========================
   // 4. 加密密钥并写入数据库
