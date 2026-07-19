@@ -24,7 +24,10 @@ RUN apk add --no-cache openssl
 ENV DATABASE_URL="file:/app/prisma/dev.db"
 
 # Pre-compile runtime scripts FIRST (needed for tag seeding)
-RUN npx tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020
+# sync-yijian-prompts.ts 依赖 import JSON（resolveJsonModule），tsc 会把
+# 一建备考提示词-config-snippet.json 一起复制到 dist-scripts/，
+# 这样 runtime 镜像 COPY dist-scripts 后即可直接 require 权威提示词。
+RUN npx tsc scripts/rebuild-system-tags.ts scripts/sync-yijian-prompts.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020
 
 # Initialize the packaged database schema and system tags. The admin is deliberately
 # created only at container startup from ADMIN_PASSWORD, never baked into the image.
