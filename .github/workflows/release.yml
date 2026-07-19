@@ -59,7 +59,9 @@ jobs:
             RANGE="HEAD"
             echo "首次发版，列出所有 commit"
           else
-            RANGE="${{ steps.version.outputs.tag }}..${PREV_TAG}"
+            # git log 范围是「旧..新」（PREV_TAG 较旧，当前 tag 较新）。
+            # 此前写成「新..旧」会得到空集，导致 changelog 永远是「无重大变更」。
+            RANGE="${PREV_TAG}..${{ steps.version.outputs.tag }}"
             echo "范围: $RANGE"
           fi
 
@@ -114,7 +116,18 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json 2>/dev/null || true
           git diff --cached --quiet || git commit -m "chore: bump version to ${{ steps.version.outputs.version }} [skip ci]"
-          git push origin HEAD:main
+
+          # 仅当当前 commit 已是 main 的最新（或与之一致）时才 push。
+          # 补发历史 tag（如 v1.14.0 指向 main 之前的 commit）时，HEAD 落后于 main，
+          # 无条件 push 会被远端拒绝并使整个 release workflow 失败。这种情况跳过
+          # version sync commit —— tag 已存在，package.json 以 tag 指向的版本为准。
+          REMOTE_MAIN=$(git rev-parse origin/main)
+          HEAD_IS_MAIN_TIP=$([ "$(git rev-parse HEAD)" = "$REMOTE_MAIN" ] && echo yes || echo no)
+          if [ "$HEAD_IS_MAIN_TIP" = "yes" ]; then
+            git push origin HEAD:main
+          else
+            echo "HEAD 不是 main 的 tip（补发历史 tag 场景），跳过 version sync push"
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
