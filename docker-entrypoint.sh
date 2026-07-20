@@ -110,19 +110,22 @@ if [ "$PREVIOUS_VERSION" != "$CURRENT_VERSION" ]; then
     cd /app && node "$REBUILD_TAGS_SCRIPT" && {
         echo "[Entrypoint] System tags rebuilt successfully."
     } || echo "[Entrypoint] Tag rebuild failed (non-fatal, continuing...)."
-
-    # Sync 一建 prompts to bySubject（幂等）：
-    #   - 方式二新用户（纯拉镜像未跑 bootstrap）：注入一建提示词
-    #   - 老用户：升级 bySubject 到镜像内权威版本
-    #   - 已一致：跳过。只碰 bySubject 三模板，密钥字段字节不动。
-    if [ -f "$SYNC_YIJIAN_SCRIPT" ]; then
-        echo "[Entrypoint] Syncing 一建 prompts (idempotent)..."
-        node "$SYNC_YIJIAN_SCRIPT" && {
-            echo "[Entrypoint] 一建 prompts synced successfully."
-        } || echo "[Entrypoint] 一建 prompt sync failed (non-fatal, continuing...)."
-    fi
     # Update version marker
     echo "$CURRENT_VERSION" > "$VERSION_FILE"
+fi
+
+# Sync 一建 prompts to bySubject（幂等）——每次容器启动都执行，不绑版本判断：
+#   - 我们经常只改代码、不 bump package 版本就发布修复镜像。若同步绑在版本
+#     变化上，生产的 .app_version 已是当前版本，拉到修复镜像也不会触发同步，
+#     警告无法真正消失。脚本本身幂等：已与镜像一致时直接跳过，无多余写入。
+#   - 方式二新用户（纯拉镜像未跑 bootstrap）：注入一建提示词
+#   - 老用户：升级 bySubject 到镜像内权威版本
+#   - 已一致：跳过。只碰 bySubject 三模板，密钥字段字节不动。
+if [ -f "$SYNC_YIJIAN_SCRIPT" ]; then
+    echo "[Entrypoint] Syncing 一建 prompts (idempotent)..."
+    node "$SYNC_YIJIAN_SCRIPT" && {
+        echo "[Entrypoint] 一建 prompts synced successfully."
+    } || echo "[Entrypoint] 一建 prompt sync failed (non-fatal, continuing...)."
 fi
 
 # HTTPS Setup

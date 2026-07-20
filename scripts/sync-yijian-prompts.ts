@@ -28,82 +28,21 @@ import * as path from 'path';
 // 直接 import 镜像内打包的权威 snippet（resolveJsonModule 已开启）
 // 编译产物在 dist-scripts/scripts/，snippet 在 /app/根目录，故用 ../../
 import snippet from '../一建备考提示词-config-snippet.json';
+// 纯函数安全逻辑（可单测）：与 Prisma / JSON snippet 解耦
+import {
+    YIJIAN_SUBJECTS,
+    buildAuthoritativeBySubject,
+    bySubjectEquals,
+    diffConfigs,
+} from './yijian-prompt-safety';
 
 const prisma = new PrismaClient();
 
 const LOG_PREFIX = '[SyncYijian]';
 const BACKUP_DIR = process.env.DATA_DIR || '/app/data';
 
-// snippet 的类型（与 src/lib/config.ts 的 bySubject 结构对齐）
-interface SubjectPrompts {
-    analyze?: string;
-    similar?: string;
-    reanswer?: string;
-}
-
-// 一建涉及的科目（与 bootstrap-config.js 保持一致）
-// 一建考试共 4 个科目，analyze 提示词内置"四科自适应策略"，AI 会按科目自动
-// 切换诊断重点，因此四科共用同一套 snippet 模板，无需逐科定制。
-const YIJIAN_SUBJECTS = ['一建管理', '一建经济', '一建法规', '一建实务'];
-
-/**
- * 从镜像 snippet 构造权威 bySubject 模板。
- * 以 snippet 的三份模板填充每个一建科目。
- */
-function buildAuthoritativeBySubject(): Record<string, SubjectPrompts> {
-    const result: Record<string, SubjectPrompts> = {};
-    for (const subject of YIJIAN_SUBJECTS) {
-        result[subject] = {
-            analyze: (snippet as any).analyze,
-            similar: (snippet as any).similar,
-            reanswer: (snippet as any).reanswer,
-        };
-    }
-    return result;
-}
-
-/**
- * 深度比较两个 bySubject 的三模板内容是否完全一致。
- */
-function bySubjectEquals(a: Record<string, SubjectPrompts> | undefined, b: Record<string, SubjectPrompts>): boolean {
-    if (!a) return false;
-    const aKeys = Object.keys(a);
-    const bKeys = Object.keys(b);
-    if (aKeys.length !== bKeys.length) return false;
-    for (const k of bKeys) {
-        if (!a[k]) return false;
-        if (a[k]!.analyze !== b[k].analyze) return false;
-        if (a[k]!.similar !== b[k].similar) return false;
-        if (a[k]!.reanswer !== b[k].reanswer) return false;
-    }
-    return true;
-}
-
-/**
- * 逐字段递归对比两个配置对象，返回差异路径列表（用于安全校验）。
- * skipPaths 中的路径不参与对比（即我们刻意修改的字段）。
- */
-function diffConfigs(a: any, b: any, skipPaths: Set<string>, pathStr = ''): string[] {
-    const diffs: string[] = [];
-    if (typeof a !== 'object' || a === null || typeof b !== 'object' || b === null) {
-        if (a !== b) diffs.push(`${pathStr}: ${JSON.stringify(a)} → ${JSON.stringify(b)}`);
-        return diffs;
-    }
-    const allKeys = new Set([...Object.keys(a), ...Object.keys(b)]);
-    for (const k of allKeys) {
-        const sub = pathStr ? `${pathStr}.${k}` : k;
-        if (skipPaths.has(sub)) continue;
-        // 跳过所有 bySubject.*.analyze/similar/reanswer（我们刻意覆盖的目标）
-        if (pathStr.startsWith('prompts.bySubject.') && (k === 'analyze' || k === 'similar' || k === 'reanswer')) {
-            continue;
-        }
-        diffs.push(...diffConfigs(a[k], b[k], skipPaths, sub));
-    }
-    return diffs;
-}
-
 async function main() {
-    const authoritative = buildAuthoritativeBySubject();
+    const authoritative = buildAuthoritativeBySubject(snippet);
     console.log(`${LOG_PREFIX} 镜像内权威一建提示词已加载（科目: ${YIJIAN_SUBJECTS.join(', ')}）`);
 
     const row = await prisma.appSetting.findUnique({ where: { id: 1 } });
@@ -175,11 +114,10 @@ async function main() {
     newCfg.prompts.bySubject = JSON.parse(JSON.stringify(authoritative));
     const newValueStr = JSON.stringify(newCfg);
 
-    // 安全校验：除 bySubject.*.{analyze,similar,reanswer} 外，所有字段必须字节不变
+    // 安全校验：除一建四科的 analyze/similar/reanswer 外，所有字段必须字节不变
     const verifyOld = JSON.parse(oldValueStr);
     const verifyNew = JSON.parse(newValueStr);
-    const skipPaths = new Set<string>();
-    const diffs = diffConfigs(verifyOld, verifyNew, skipPaths);
+    const diffs = diffConfigs(verifyOld, verifyNew);
     if (diffs.length > 0) {
         console.error(`${LOG_PREFIX} ❌ 安全校验失败：除 bySubject 模板外发现其他字段被改动:`);
         for (const d of diffs.slice(0, 20)) console.error(`   ${d}`);
