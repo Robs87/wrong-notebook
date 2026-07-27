@@ -52,6 +52,53 @@ const CONTENT_TAGS_WITH_TRUNCATION_FALLBACK = new Set([
 ]);
 
 /**
+ * 已知标签名的常见错写变体映射：标准名 → 错写形式列表。
+ *
+ * 第一性原理：unraid 生产日志（2026-07-27）实测发现 agnes-2.0-flash 会把
+ * `<answer_text>` 写成 `<answer text>`（下划线被替换为空格），导致 extractTag
+ * 精确匹配失败、整道题的解析被丢弃（用户看到「AI 返回数据格式异常」）。
+ * 实际上 <analysis> 内容完整存在，纯粹因为开标签名字符差异导致整体解析失败。
+ *
+ * 这里只列下划线长标签的常见错写形式（空格 / 连字符）。短标签（subject、
+ * analysis）几乎不会出错，不列入；避免过度宽泛误伤正文中的尖括号文本。
+ */
+const TAG_NAME_VARIANTS: Record<string, string[]> = {
+    answer_text: ['answer text', 'answer-text'],
+    question_text: ['question text', 'question-text'],
+    knowledge_points: ['knowledge points', 'knowledge-points'],
+    requires_image: ['requires image', 'requires-image'],
+    wrong_answer_text: ['wrong answer text', 'wrong-answer-text'],
+    mistake_status: ['mistake status', 'mistake-status'],
+    mistake_analysis: ['mistake analysis', 'mistake-analysis'],
+    answer_key: ['answer key', 'answer-key'],
+};
+
+/** 返回某个标签名的全部可匹配形式（标准名 + 已知变体）。 */
+function tagNameAlternatives(tagName: string): string[] {
+    return [tagName, ...(TAG_NAME_VARIANTS[tagName] ?? [])];
+}
+
+/** 转义字符串中的正则元字符，使其可安全嵌入正则。 */
+function escapeForRegex(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** 缓存已构造的标签正则，避免每次 extractTag 调用都重新编译。 */
+const tagRegexCache = new Map<string, { open: RegExp; close: RegExp }>();
+
+function getTagRegexes(tagName: string): { open: RegExp; close: RegExp } {
+    let cached = tagRegexCache.get(tagName);
+    if (cached) return cached;
+    const alt = tagNameAlternatives(tagName).map(escapeForRegex).join('|');
+    cached = {
+        open: new RegExp(`<(?:${alt})>`, 'g'),
+        close: new RegExp(`</(?:${alt})>`, 'g'),
+    };
+    tagRegexCache.set(tagName, cached);
+    return cached;
+}
+
+/**
  * 从文本中提取 XML 风格标签内容。
  *
  * 配对策略（关键）：开标签取**最后一个**，闭标签取**其后第一个**。
@@ -68,19 +115,30 @@ const CONTENT_TAGS_WITH_TRUNCATION_FALLBACK = new Set([
  * 最后一个标签因截断而整体解析失败。
  */
 export function extractTag(text: string, tagName: string): string | null {
-    const startTag = `<${tagName}>`;
-    const endTag = `</${tagName}>`;
+    const { open: openRegex, close: closeRegex } = getTagRegexes(tagName);
 
     // 开标签取最后一个：跳过模型重复/泄漏的前置同名标签，定位到最终定稿块
-    const startIndex = text.lastIndexOf(startTag);
+    // 同时容错标签名错写（如 <answer text> 当作 <answer_text>）
+    let lastOpenMatch: RegExpExecArray | null = null;
+    let m: RegExpExecArray | null;
+    openRegex.lastIndex = 0;
+    while ((m = openRegex.exec(text)) !== null) {
+        lastOpenMatch = m;
+        // 防御零宽匹配死循环（实际不会发生，标签名至少含字母）
+        if (m.index === openRegex.lastIndex) openRegex.lastIndex++;
+    }
 
-    if (startIndex === -1) {
+    if (!lastOpenMatch) {
         return null;
     }
 
-    const contentStartIndex = startIndex + startTag.length;
-    // 闭标签取其后第一个：与最后一个开标签正确配对
-    const endIndex = text.indexOf(endTag, contentStartIndex);
+    const startIndex = lastOpenMatch.index;
+    const contentStartIndex = startIndex + lastOpenMatch[0].length;
+
+    // 闭标签取其后第一个：与最后一个开标签正确配对（同样容错变体写法）
+    closeRegex.lastIndex = contentStartIndex;
+    const closeMatch = closeRegex.exec(text);
+    const endIndex = closeMatch ? closeMatch.index : -1;
 
     // 截断兜底：内容标签闭标签缺失时，读到末尾（被截断或被 CoT 吞掉）
     if (endIndex === -1 && CONTENT_TAGS_WITH_TRUNCATION_FALLBACK.has(tagName)) {

@@ -108,6 +108,86 @@ describe('extractTag', () => {
             expect(extractTag('<test> </test>', 'test')).toBe('');
         });
     });
+
+    describe('标签名错写容错（agnes-2.0-flash 实测修复）', () => {
+        // 复刻 unraid 2026-07-27 14:40 实测失败样本：模型把 <answer_text>
+        // 写成 <answer text>（下划线被替换为空格），导致整道题解析被丢弃。
+        it('开标签下划线被写成空格时，仍按标准名提取', () => {
+            const text = [
+                '<question_text>题干内容</question_text>',
+                '<answer text>正确答案：ADE</answer_text>',
+                '<analysis>详细解析</analysis>',
+            ].join('\n');
+            expect(extractTag(text, 'answer_text')).toBe('正确答案：ADE');
+        });
+
+        it('开标签下划线被写成连字符时，仍按标准名提取', () => {
+            const text = '<answer-text>x</answer-text>';
+            expect(extractTag(text, 'answer_text')).toBe('x');
+        });
+
+        it('question_text 下划线被写成空格时，仍按标准名提取', () => {
+            const text = '<question text>题干</question text>';
+            expect(extractTag(text, 'question_text')).toBe('题干');
+        });
+
+        it('开标签标准、闭标签错写时，仍能配对提取', () => {
+            // 模型偶尔只在闭标签出错
+            const text = '<answer_text>答案内容</answer text>';
+            expect(extractTag(text, 'answer_text')).toBe('答案内容');
+        });
+
+        it('混合错写：开错闭对 + 开对闭错 都能正确提取', () => {
+            const t1 = '<answer text>A</answer_text>';
+            const t2 = '<answer_text>B</answer text>';
+            expect(extractTag(t1, 'answer_text')).toBe('A');
+            expect(extractTag(t2, 'answer_text')).toBe('B');
+        });
+
+        it('变体写法下仍保留「最后开标签 + 其后首个闭」配对策略', () => {
+            // 变体写法不应破坏 CoT 防御
+            const text = [
+                '<answer text>CoT 泄漏内容</answer text>',
+                '<answer_text>真正答案</answer_text>',
+            ].join('\n');
+            expect(extractTag(text, 'answer_text')).toBe('真正答案');
+        });
+
+        it('变体写法下仍启用内容标签截断兜底', () => {
+            const text = '<answer text>答案未闭合';
+            expect(extractTag(text, 'answer_text')).toBe('答案未闭合');
+        });
+
+        it('未登记的标签名（如 subject）不受变体匹配影响', () => {
+            // subject 不在 TAG_NAME_VARIANTS 中，错写不应被识别
+            expect(extractTag('<sub ject>x</sub ject>', 'subject')).toBeNull();
+        });
+
+        it('正则元字符安全：变体含点号等不会被误解析', () => {
+            // 防御：标签名变体未来若加入特殊字符，escapeForRegex 应保证安全
+            const text = '<answer_text>x</answer_text>';
+            expect(extractTag(text, 'answer_text')).toBe('x');
+        });
+
+        it('完整复刻生产样本：题干对、答案标签错写、解析完整，应整体解析成功', () => {
+            // 来自 unraid 日志的真实样本（已脱敏）
+            const text = [
+                '<subject>其他</subject>',
+                '<knowledge_points>1Z304050 监督管理</knowledge_points>',
+                '<requires_image>false</requires_image>',
+                '<question_text>87、政府对工程质量监督管理的内容包括（）。</question_text>',
+                '<answer text>正确答案：ADE</answer_text>',
+                '<wrong_answer_text></wrong_answer_text>',
+                '<mistake_status>not_attempted</mistake_status>',
+                '<mistake_analysis>预判错因</mistake_analysis>',
+                '<analysis>完整解析内容：依据《建设工程质量管理条例》...</analysis>',
+            ].join('\n');
+            expect(extractTag(text, 'answer_text')).toBe('正确答案：ADE');
+            expect(extractTag(text, 'analysis')).toContain('完整解析内容');
+            expect(extractTag(text, 'question_text')).toContain('工程质量监督管理');
+            expect(extractTag(text, 'subject')).toBe('其他');
+        });
+    });
 });
 
 describe('recoverAnalysisFromAnswerText', () => {

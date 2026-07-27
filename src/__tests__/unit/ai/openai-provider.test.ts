@@ -172,6 +172,31 @@ describe('OpenAI Provider 响应解析', () => {
             expect(result.analysis).toContain('【答案解析】');
             expect(result.analysis).toContain('流水步距');
         });
+
+        it('标签名下划线被写成空格（agnes-2.0-flash 实测）时仍应成功解析', () => {
+            // 复刻 unraid 2026-07-27 14:40 实测失败样本：模型把 <answer_text>
+            // 写成 <answer text>（下划线变空格），旧逻辑直接抛 AI_RESPONSE_ERROR
+            // 导致用户看到「AI 返回数据格式异常，请重试。」。修复后应整体走通。
+            const mockResponse = [
+                '<subject>其他</subject>',
+                '<knowledge_points>1Z304050 监督督管理</knowledge_points>',
+                '<requires_image>false</requires_image>',
+                '<question_text>87、政府对工程质量监督管理的内容包括（）。</question_text>',
+                '<answer text>正确答案：ADE</answer_text>',
+                '<wrong_answer_text></wrong_answer_text>',
+                '<mistake_status>not_attempted</mistake_status>',
+                '<mistake_analysis>预判错因为审题混淆。</mistake_analysis>',
+                '<analysis>依据《建设工程质量管理条例》的详细解析。</analysis>',
+            ].join('\n');
+
+            const result = asPrivateProvider(provider).parseResponse(mockResponse);
+            expect(result.subject).toBe('其他');
+            expect(result.questionText).toContain('工程质量监督管理');
+            expect(result.answerText).toBe('正确答案：ADE');
+            expect(result.analysis).toContain('建设工程质量管理条例');
+            expect(result.mistakeStatus).toBe('not_attempted');
+            expect(result.requiresImage).toBe(false);
+        });
     });
 });
 
