@@ -23,55 +23,90 @@ type OpenAIMessage = {
 };
 
 type CompletionResponseLike = {
-    choices?: Array<{
+    choices: Array<{
         message?: unknown;
     }>;
 };
+
+type OpenAIClientContext = {
+    client: OpenAI;
+    model: string;
+    baseURL: string;
+    apiKey: string;
+    isLongCat: boolean;
+    label: string;
+};
+
+// 一次原始请求 + 一次重试；请求失败后才切换同模型备用实例。
+// 保持有界，避免上游长时间挂起时把一次用户操作放大成无限等待。
+const MAX_TRANSIENT_ATTEMPTS = 2;
+const RETRY_DELAY_MS = 250;
+
+const RETRYABLE_STATUS_CODES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+
+function getErrorStatus(error: unknown): number | undefined {
+    if (!isRecord(error)) return undefined;
+    if (typeof error.status === 'number') return error.status;
+    if (isRecord(error.response) && typeof error.response.status === 'number') {
+        return error.response.status;
+    }
+    return undefined;
+}
+
+function getErrorText(error: unknown): string {
+    const messages: string[] = [];
+    let current: unknown = error;
+    for (let depth = 0; depth < 3 && current; depth += 1) {
+        if (current instanceof Error) {
+            messages.push(current.message);
+            current = current.cause;
+        } else if (isRecord(current)) {
+            if (typeof current.message === 'string') messages.push(current.message);
+            current = current.cause;
+        } else {
+            break;
+        }
+    }
+    return messages.join(' ').toLowerCase();
+}
+
+function isTransientError(error: unknown): boolean {
+    const status = getErrorStatus(error);
+    if (status !== undefined) return RETRYABLE_STATUS_CODES.has(status);
+
+    const message = getErrorText(error);
+    return /connection error|fetch failed|network|econnreset|econnrefused|enotfound|eai_again|etimedout|socket hang up|timed out|timeout|\b(?:408|409|425|429|500|502|503|504)\b/.test(message);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
 }
 
 export class OpenAIProvider implements AIService {
-    private openai: OpenAI;
     private model: string;
     private baseURL: string;
-    private apiKey: string;
-    private isLongCat: boolean;
     private requestTimeoutMs: number;
+    private clientContexts: OpenAIClientContext[];
 
-    constructor(config?: AIConfig) {
-        const apiKey = config?.apiKey;
-        const baseURL = config?.baseUrl;
-
-        if (!apiKey) {
-            throw new Error("AI_AUTH_ERROR: OPENAI_API_KEY is required for OpenAI provider");
-        }
-
+    constructor(config?: AIConfig, fallbackConfigs: AIConfig[] = []) {
         // 从全局配置读取单次 AI 调用的超时上限，避免上游挂起导致请求无限阻塞
         const appConfig = getAppConfig();
         this.requestTimeoutMs = appConfig?.timeouts?.analyze || 180000;
 
-        const trustedBaseUrl = assertTrustedBaseUrl(baseURL || 'https://api.openai.com/v1');
-        if (!trustedBaseUrl.ok) {
-            throw new Error(`AI_CONFIG_ERROR: unsafe OpenAI base URL (${trustedBaseUrl.error})`);
+        const primaryCandidate = this.createClientContext(config, true);
+        if (!primaryCandidate) {
+            throw new Error("AI_AUTH_ERROR: OPENAI_API_KEY is required for OpenAI provider");
         }
+        const primary = primaryCandidate;
+        const fallbacks = fallbackConfigs
+            .map((candidate) => this.createClientContext(candidate, false))
+            .filter((candidate): candidate is OpenAIClientContext => candidate !== null);
+        this.clientContexts = [primary, ...fallbacks];
 
-        this.openai = new OpenAI({
-            apiKey: apiKey,
-            baseURL: trustedBaseUrl.origin,
-            // OpenAI SDK 的 timeout 触发后会自动 abort 底层请求
-            timeout: this.requestTimeoutMs,
-            maxRetries: 0,
-            defaultHeaders: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            },
-        });
-
-        this.model = config?.model || 'gpt-4o'; // Fallback for safety
-        this.baseURL = trustedBaseUrl.origin!;
-        this.apiKey = apiKey;
-        this.isLongCat = this.baseURL.includes('longcat.chat');
+        // 保留主实例字段用于日志；实际请求由 withTransientRetry() 按主实例
+        // → 同模型备用实例执行。
+        this.model = primary.model;
+        this.baseURL = primary.baseURL;
 
         logger.info({
             provider: 'OpenAI',
@@ -79,7 +114,92 @@ export class OpenAIProvider implements AIService {
             baseURL: this.baseURL,
             timeoutMs: this.requestTimeoutMs,
             hasKey: true,
+            fallbackCount: this.clientContexts.length - 1,
         }, 'AI Provider initialized');
+    }
+
+    private createClientContext(config: AIConfig | undefined, primary: boolean): OpenAIClientContext | null {
+        const apiKey = config?.apiKey;
+        if (!apiKey) {
+            if (primary) {
+                throw new Error("AI_AUTH_ERROR: OPENAI_API_KEY is required for OpenAI provider");
+            }
+            logger.warn({ instance: config?.name || config?.id || 'unnamed' }, 'Skipping OpenAI fallback without API key');
+            return null;
+        }
+
+        const baseURL = config?.baseUrl;
+        const trustedBaseUrl = assertTrustedBaseUrl(baseURL || 'https://api.openai.com/v1');
+        if (!trustedBaseUrl.ok) {
+            if (primary) {
+                throw new Error(`AI_CONFIG_ERROR: unsafe OpenAI base URL (${trustedBaseUrl.error})`);
+            }
+            logger.warn({ instance: config?.name || config?.id || 'unnamed', reason: trustedBaseUrl.error }, 'Skipping unsafe OpenAI fallback');
+            return null;
+        }
+
+        const origin = trustedBaseUrl.origin!;
+        const client = new OpenAI({
+            apiKey,
+            baseURL: origin,
+            // SDK retries are disabled so retry/failover remains explicit, bounded,
+            // and covered by this provider's regression tests.
+            timeout: this.requestTimeoutMs,
+            maxRetries: 0,
+            defaultHeaders: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            },
+        });
+
+        return {
+            client,
+            model: config?.model || 'gpt-4o',
+            baseURL: origin,
+            apiKey,
+            isLongCat: origin.includes('longcat.chat'),
+            label: config?.name || config?.id || origin,
+        };
+    }
+
+    private async withTransientRetry<T>(
+        operation: string,
+        request: (context: OpenAIClientContext) => Promise<T>
+    ): Promise<T> {
+        let lastError: unknown;
+
+        for (let contextIndex = 0; contextIndex < this.clientContexts.length; contextIndex += 1) {
+            const context = this.clientContexts[contextIndex];
+
+            for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
+                try {
+                    return await request(context);
+                } catch (error) {
+                    lastError = error;
+                    const transient = isTransientError(error);
+                    const canRetry = transient && attempt < MAX_TRANSIENT_ATTEMPTS;
+                    const canFailover = transient && contextIndex < this.clientContexts.length - 1;
+
+                    if (!canRetry && !canFailover) throw error;
+
+                    logger.warn({
+                        operation,
+                        instance: context.label,
+                        attempt,
+                        status: getErrorStatus(error),
+                        action: canRetry ? 'retry' : 'failover',
+                    }, 'Transient AI request failure');
+
+                    if (canRetry) {
+                        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * attempt));
+                    } else {
+                        // 当前实例的最后一次尝试失败后立即切换备用实例。
+                        break;
+                    }
+                }
+            }
+        }
+
+        throw lastError instanceof Error ? lastError : new Error('AI request failed');
     }
 
     /**
@@ -248,56 +368,56 @@ export class OpenAIProvider implements AIService {
 
             logger.box('📤 API Request (发送给 AI 的原始请求)', JSON.stringify(requestParamsForLog, null, 2));
 
-            let response: CompletionResponseLike;
-
-            if (this.isLongCat) {
-                // LongCat 使用不同的多模态格式，绕过 SDK 直接请求
-                const messages = this.adaptMessagesForLongCat([
-                    { role: "system", content: systemPrompt },
-                    {
-                        role: "user",
-                        content: [
-                            {
-                                type: "image_url",
-                                image_url: {
-                                    url: `data:${mimeType};base64,${imageBase64}`,
+            const response = await this.withTransientRetry('image analysis', async (context) => {
+                if (context.isLongCat) {
+                    // LongCat 使用不同的多模态格式，绕过 SDK 直接请求
+                    const messages = this.adaptMessagesForLongCat([
+                        { role: "system", content: systemPrompt },
+                        {
+                            role: "user",
+                            content: [
+                                {
+                                    type: "image_url",
+                                    image_url: {
+                                        url: `data:${mimeType};base64,${imageBase64}`,
+                                    },
                                 },
-                            },
-                        ],
-                    },
-                ]);
-
-                const { signal: longcatSignal, timeoutId: longcatTimeoutId } = this.createTimeoutSignal();
-                try {
-                    const res = await fetch(`${this.baseURL}/chat/completions`, {
-                        method: 'POST',
-                        redirect: 'error',
-                        headers: {
-                            'Authorization': `Bearer ${this.apiKey}`,
-                            'Content-Type': 'application/json',
+                            ],
                         },
-                        signal: longcatSignal,
-                        body: JSON.stringify({
-                            model: this.model,
-                            messages,
-                            max_tokens: 8192,
-                            ...getDisableThinkingBody(),
-                        }),
-                    });
+                    ]);
 
-                    if (!res.ok) {
-                        const errBody = await res.text();
-                        logger.error({ status: res.status, body: errBody }, 'LongCat API error');
-                        throw new Error(`${res.status} status code (${errBody})`);
+                    const { signal: longcatSignal, timeoutId: longcatTimeoutId } = this.createTimeoutSignal();
+                    try {
+                        const res = await fetch(`${context.baseURL}/chat/completions`, {
+                            method: 'POST',
+                            redirect: 'error',
+                            headers: {
+                                'Authorization': `Bearer ${context.apiKey}`,
+                                'Content-Type': 'application/json',
+                            },
+                            signal: longcatSignal,
+                            body: JSON.stringify({
+                                model: context.model,
+                                messages,
+                                max_tokens: 8192,
+                                ...getDisableThinkingBody(),
+                            }),
+                        });
+
+                        if (!res.ok) {
+                            const errBody = await res.text();
+                            logger.error({ status: res.status, body: errBody }, 'LongCat API error');
+                            throw new Error(`${res.status} status code (${errBody})`);
+                        }
+
+                        return await res.json() as CompletionResponseLike;
+                    } finally {
+                        clearTimeout(longcatTimeoutId);
                     }
-
-                    response = await res.json();
-                } finally {
-                    clearTimeout(longcatTimeoutId);
                 }
-            } else {
+
                 const params: ChatCompletionCreateParamsNonStreaming = {
-                    model: this.model,
+                    model: context.model,
                     messages: [
                         {
                             role: "system",
@@ -319,8 +439,8 @@ export class OpenAIProvider implements AIService {
                     max_tokens: 8192,
                     ...getDisableThinkingBody(),
                 };
-                response = await this.openai.chat.completions.create(params);
-            }
+                return await context.client.chat.completions.create(params) as CompletionResponseLike;
+            });
 
             logger.box('📦 Full API Response', JSON.stringify(response, null, 2));
 
@@ -371,17 +491,19 @@ export class OpenAIProvider implements AIService {
         logger.box('📝 User Prompt', userPrompt);
 
         try {
-            const params: ChatCompletionCreateParamsNonStreaming = {
-                model: this.model,
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: userPrompt },
-                ],
-                // response_format: { type: "json_object" }, // Removing to improve compatibility with 3rd party providers
-                max_tokens: 8192,
-                ...getDisableThinkingBody(),
-            };
-            const response = await this.openai.chat.completions.create(params);
+            const response = await this.withTransientRetry('similar question generation', (context) => {
+                const params: ChatCompletionCreateParamsNonStreaming = {
+                    model: context.model,
+                    messages: [
+                        { role: "system", content: systemPrompt },
+                        { role: "user", content: userPrompt },
+                    ],
+                    // response_format: { type: "json_object" }, // Removing to improve compatibility with 3rd party providers
+                    max_tokens: 8192,
+                    ...getDisableThinkingBody(),
+                };
+                return context.client.chat.completions.create(params) as Promise<CompletionResponseLike>;
+            });
 
             const text = extractResponseText(response.choices[0]?.message);
 
@@ -446,16 +568,18 @@ export class OpenAIProvider implements AIService {
             };
             logger.debug({ requestParams }, 'Request parameters');
 
-            const params: ChatCompletionCreateParamsNonStreaming = {
-                model: this.model,
-                messages: [
-                    { role: "system", content: prompt },
-                    { role: "user", content: userContent }
-                ],
-                max_tokens: 8192,
-                ...getDisableThinkingBody(),
-            };
-            const response = await this.openai.chat.completions.create(params);
+            const response = await this.withTransientRetry('reanswer question', (context) => {
+                const params: ChatCompletionCreateParamsNonStreaming = {
+                    model: context.model,
+                    messages: [
+                        { role: "system", content: prompt },
+                        { role: "user", content: userContent }
+                    ],
+                    max_tokens: 8192,
+                    ...getDisableThinkingBody(),
+                };
+                return context.client.chat.completions.create(params) as Promise<CompletionResponseLike>;
+            });
 
             logger.debug({ response: JSON.stringify(response) }, 'Full API response');
 
@@ -510,16 +634,18 @@ export class OpenAIProvider implements AIService {
         }, 'Judge Answer Request');
 
         try {
-            const params: ChatCompletionCreateParamsNonStreaming = {
-                model: this.model,
-                messages: [
-                    { role: "system", content: prompt },
-                    { role: "user", content: "请判定学生答案是否正确。" }
-                ],
-                max_tokens: 256,
-                ...getDisableThinkingBody(),
-            };
-            const response = await this.openai.chat.completions.create(params);
+            const response = await this.withTransientRetry('answer judging', (context) => {
+                const params: ChatCompletionCreateParamsNonStreaming = {
+                    model: context.model,
+                    messages: [
+                        { role: "system", content: prompt },
+                        { role: "user", content: "请判定学生答案是否正确。" }
+                    ],
+                    max_tokens: 256,
+                    ...getDisableThinkingBody(),
+                };
+                return context.client.chat.completions.create(params) as Promise<CompletionResponseLike>;
+            });
 
             const text = extractResponseText(response.choices[0]?.message);
             logger.debug({ rawResponse: text }, 'Judge AI raw response');
@@ -550,16 +676,18 @@ export class OpenAIProvider implements AIService {
         }, 'GeoGebra Analysis Request');
 
         try {
-            const params: ChatCompletionCreateParamsNonStreaming = {
-                model: this.model,
-                messages: [
-                    { role: "system", content: prompt },
-                    { role: "user", content: "请分析上述题目并生成 GeoGebra 演示命令。" }
-                ],
-                max_tokens: 4096,
-                ...getDisableThinkingBody(),
-            };
-            const response = await this.openai.chat.completions.create(params);
+            const response = await this.withTransientRetry('GeoGebra analysis', (context) => {
+                const params: ChatCompletionCreateParamsNonStreaming = {
+                    model: context.model,
+                    messages: [
+                        { role: "system", content: prompt },
+                        { role: "user", content: "请分析上述题目并生成 GeoGebra 演示命令。" }
+                    ],
+                    max_tokens: 4096,
+                    ...getDisableThinkingBody(),
+                };
+                return context.client.chat.completions.create(params) as Promise<CompletionResponseLike>;
+            });
 
             const text = extractResponseText(response.choices[0]?.message);
             logger.debug({ rawResponse: text }, 'GeoGebra AI raw response');

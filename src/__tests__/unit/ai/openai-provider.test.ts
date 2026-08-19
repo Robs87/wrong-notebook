@@ -269,6 +269,45 @@ describe('OpenAI Provider 错误处理', () => {
         });
     });
 
+    it('连接异常后应自动重试并恢复分析请求', async () => {
+        mockCompletionCreate
+            .mockRejectedValueOnce(new Error('Connection error.'))
+            .mockResolvedValueOnce({
+                choices: [{
+                    message: {
+                        content: '<question_text>Q</question_text><answer_text>A</answer_text><analysis>An</analysis><subject>数学</subject>',
+                    },
+                }],
+            });
+
+        const result = await provider.analyzeImage('base64data');
+
+        expect(result.questionText).toBe('Q');
+        expect(mockCompletionCreate).toHaveBeenCalledTimes(2);
+    });
+
+    it('主实例重试耗尽后应切换到备用实例', async () => {
+        provider = new OpenAIProvider(
+            { apiKey: 'primary-key', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o', name: 'primary' },
+            [{ apiKey: 'fallback-key', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o', name: 'fallback' }],
+        );
+        mockCompletionCreate
+            .mockRejectedValueOnce(new Error('Connection error.'))
+            .mockRejectedValueOnce(new Error('Connection error.'))
+            .mockResolvedValueOnce({
+                choices: [{
+                    message: {
+                        content: '<question_text>Q</question_text><answer_text>A</answer_text><analysis>An</analysis><subject>数学</subject>',
+                    },
+                }],
+            });
+
+        const result = await provider.analyzeImage('base64data');
+
+        expect(result.questionText).toBe('Q');
+        expect(mockCompletionCreate).toHaveBeenCalledTimes(3);
+    });
+
     describe('handleError', () => {
         it('应该将网络错误转换为 AI_CONNECTION_FAILED', () => {
             const networkError = new Error('fetch failed');

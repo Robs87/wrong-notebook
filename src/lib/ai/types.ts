@@ -54,6 +54,8 @@ export interface AIService {
 }
 
 export interface AIConfig {
+    id?: string;
+    name?: string;
     apiKey?: string;
     baseUrl?: string;
     model?: string;
