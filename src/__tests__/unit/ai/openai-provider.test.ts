@@ -294,6 +294,32 @@ describe('OpenAI Provider 错误处理', () => {
         expect(firstRequestOptions?.timeout).toBeLessThan(180_000);
     });
 
+    it('多个视觉候选时不应预先均分 active 首次请求预算', async () => {
+        provider = new OpenAIProvider(
+            { apiKey: 'primary-key', baseUrl: 'https://api.openai.com/v1', model: 'vision-primary', name: 'primary' },
+            [],
+            [
+                { apiKey: 'fallback-1', baseUrl: 'https://api.openai.com/v1', model: 'vision-1', name: 'vision-1' },
+                { apiKey: 'fallback-2', baseUrl: 'https://api.openai.com/v1', model: 'vision-2', name: 'vision-2' },
+                { apiKey: 'fallback-3', baseUrl: 'https://api.openai.com/v1', model: 'vision-3', name: 'vision-3' },
+                { apiKey: 'fallback-4', baseUrl: 'https://api.openai.com/v1', model: 'vision-4', name: 'vision-4' },
+            ],
+        );
+        mockCompletionCreate.mockResolvedValueOnce({
+            choices: [{
+                message: {
+                    content: '<question_text>Q</question_text><answer_text>A</answer_text><analysis>An</analysis><subject>数学</subject>',
+                },
+            }],
+        });
+
+        await provider.analyzeImage('base64data');
+
+        const firstRequestOptions = mockCompletionCreate.mock.calls[0]?.[1] as { timeout?: number } | undefined;
+        // SiliconFlow 等视觉模型需要完整的单请求窗口；不能因为候选尚未发生就只给约 17 秒。
+        expect(firstRequestOptions?.timeout).toBeGreaterThanOrEqual(60_000);
+    });
+
     it('主实例重试耗尽后应切换到备用实例', async () => {
         provider = new OpenAIProvider(
             { apiKey: 'primary-key', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o', name: 'primary' },

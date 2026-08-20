@@ -52,6 +52,9 @@ type AttemptControl = OpenAIRequestOptions & {
 const MAX_TRANSIENT_ATTEMPTS = 2;
 const RETRY_DELAY_MS = 250;
 const REQUEST_DEADLINE_BUFFER_MS = 5000;
+// 视觉模型通常需要先完成图片编码/理解，再开始生成。不能因为配置了多个
+// fallback 就把 active 的首次请求预切成十几秒；总 deadline 仍是硬上限。
+const MIN_VISION_ATTEMPT_TIMEOUT_MS = 60_000;
 
 const RETRYABLE_STATUS_CODES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 // 这些状态不适合在同一实例上重复请求，但切换到用户配置的另一实例仍有意义：
@@ -197,6 +200,7 @@ export class OpenAIProvider implements AIService {
         operation: string,
         request: (context: OpenAIClientContext, options: OpenAIRequestOptions) => Promise<T>,
         contexts: OpenAIClientContext[] = this.clientContexts,
+        minimumAttemptTimeoutMs = 0,
     ): Promise<T> {
         let lastError: unknown;
         // 前端也会在 analyzeTimeoutMs 后中止请求。为避免服务端继续在浏览器
@@ -215,7 +219,11 @@ export class OpenAIProvider implements AIService {
             for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
                 const attemptsRemaining =
                     (contexts.length - contextIndex) * MAX_TRANSIENT_ATTEMPTS - (attempt - 1);
-                const control = this.createAttemptControl(deadline, attemptsRemaining);
+                const control = this.createAttemptControl(
+                    deadline,
+                    attemptsRemaining,
+                    minimumAttemptTimeoutMs,
+                );
                 if (!control) {
                     throw this.createTimeoutError(lastError);
                 }
@@ -278,12 +286,20 @@ export class OpenAIProvider implements AIService {
         throw lastError instanceof Error ? lastError : new Error('AI request failed');
     }
 
-    private createAttemptControl(deadline: number, attemptsRemaining: number): AttemptControl | null {
+    private createAttemptControl(
+        deadline: number,
+        attemptsRemaining: number,
+        minimumTimeoutMs = 0,
+    ): AttemptControl | null {
         const remainingMs = deadline - Date.now();
         if (remainingMs <= 0) return null;
 
         const controller = new AbortController();
-        const timeout = Math.max(1, Math.floor(remainingMs / Math.max(1, attemptsRemaining)));
+        const fairShare = Math.floor(remainingMs / Math.max(1, attemptsRemaining));
+        const timeout = Math.min(
+            remainingMs,
+            Math.max(1, fairShare, minimumTimeoutMs),
+        );
         let didTimeout = false;
         const timeoutId = setTimeout(() => {
             didTimeout = true;
@@ -529,7 +545,7 @@ export class OpenAIProvider implements AIService {
                     ...getDisableThinkingBody(),
                 };
                 return await context.client.chat.completions.create(params, requestOptions) as CompletionResponseLike;
-            }, this.visionClientContexts);
+            }, this.visionClientContexts, MIN_VISION_ATTEMPT_TIMEOUT_MS);
 
             logger.box('📦 Full API Response', JSON.stringify(response, null, 2));
 
