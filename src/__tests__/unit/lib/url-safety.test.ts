@@ -3,7 +3,7 @@
  *
  * 验证：私有/内部地址被拒绝、官方白名单放行、协议限制、DNS 解析。
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { isPrivateHost, assertSafeBaseUrl, DEFAULT_ALLOWED_HOSTS } from '@/lib/url-safety';
 
 describe('isPrivateHost', () => {
@@ -172,6 +172,61 @@ describe('assertSafeBaseUrl', () => {
 
     it('未列入信任清单的公网 IPv6 字面量也拒绝', async () => {
         const r = await assertSafeBaseUrl('https://[2606:4700:4700::1111]/v1', [], false);
+        expect(r.ok).toBe(false);
+    });
+});
+
+describe('AI_ALLOWED_HOSTS 显式信任的自建私网网关', () => {
+    beforeEach(() => {
+        vi.resetModules();
+    });
+
+    afterEach(() => {
+        delete process.env.AI_ALLOWED_HOSTS;
+        vi.restoreAllMocks();
+    });
+
+    it('未配置 AI_ALLOWED_HOSTS 时，私网地址仍被拒绝', async () => {
+        delete process.env.AI_ALLOWED_HOSTS;
+        const r = await assertSafeBaseUrl('http://192.168.31.190:28080/v1', [], false);
+        expect(r.ok).toBe(false);
+    });
+
+    it('AI_ALLOWED_HOSTS 显式列出的私网 IP 放行（含 DNS 检查路径）', async () => {
+        process.env.AI_ALLOWED_HOSTS = 'robs.332626.xyz,192.168.31.190';
+        const r = await assertSafeBaseUrl('http://192.168.31.190:28080/v1');
+        expect(r.ok).toBe(true);
+        expect(r.origin).toBe('http://192.168.31.190:28080/v1');
+    });
+
+    it('同步校验 assertTrustedBaseUrl 同样放行显式信任的私网 IP', async () => {
+        process.env.AI_ALLOWED_HOSTS = '192.168.31.190';
+        const { assertTrustedBaseUrl } = await import('@/lib/url-safety');
+        const r = assertTrustedBaseUrl('http://192.168.31.190:28080/v1');
+        expect(r.ok).toBe(true);
+        expect(r.origin).toBe('http://192.168.31.190:28080/v1');
+    });
+
+    it('显式信任不扩展到其它私网地址或 metadata 服务', async () => {
+        process.env.AI_ALLOWED_HOSTS = '192.168.31.190';
+        expect((await assertSafeBaseUrl('http://192.168.31.191:28080/v1', [], false)).ok).toBe(false);
+        expect((await assertSafeBaseUrl('http://10.0.0.5:8080', [], false)).ok).toBe(false);
+        expect((await assertSafeBaseUrl('http://169.254.169.254/latest/meta-data', [], false)).ok).toBe(false);
+    });
+
+    it('调用方传入的额外白名单（默认公网清单）不能豁免私网地址', async () => {
+        delete process.env.AI_ALLOWED_HOSTS;
+        const r = await assertSafeBaseUrl('http://192.168.31.190:28080/v1', ['api.openai.com'], false);
+        expect(r.ok).toBe(false);
+    });
+
+    it('未显式信任的主机名解析到私网仍拒绝（DNS rebinding 防线不放松）', async () => {
+        process.env.AI_ALLOWED_HOSTS = '192.168.31.190';
+        const dns = await import('dns');
+        vi.spyOn(dns.promises, 'lookup').mockResolvedValue([
+            { address: '192.168.31.190', family: 4 },
+        ] as never);
+        const r = await assertSafeBaseUrl('https://lan-gateway.example.com');
         expect(r.ok).toBe(false);
     });
 });

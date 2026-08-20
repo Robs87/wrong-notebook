@@ -28,6 +28,17 @@ export function configuredAllowedHosts(): string[] {
 }
 
 /**
+ * 判断主机是否被运维通过 AI_ALLOWED_HOSTS 显式信任（含子域）。
+ * 仅部署环境可控，不接受请求参数传入；用于豁免自建 LAN 网关的私网地址。
+ * 默认白名单与调用方附加白名单均为公网官方主机，不参与私网豁免。
+ */
+function isExplicitlyConfiguredHost(host: string): boolean {
+    return configuredAllowedHosts().some(
+        (allowed) => host === allowed || host.endsWith(`.${allowed}`)
+    );
+}
+
+/**
  * 判断 IPv4 字面量是否属于私有/内部/保留段。
  * 覆盖 RFC1918、环回、0.0.0.0/8、链路本地（含 AWS metadata）、CGNAT、多播/保留。
  */
@@ -141,7 +152,9 @@ export function assertTrustedBaseUrl(
     }
 
     const host = parsed.hostname.replace(/^\[|]$/g, '').toLowerCase();
-    if (isPrivateHost(host)) {
+    // 私网地址默认拒绝；仅当运维在 AI_ALLOWED_HOSTS 中显式列出该主机时豁免
+    // （自建 LAN 网关场景）。该信任来源是部署环境，不受请求输入影响。
+    if (isPrivateHost(host) && !isExplicitlyConfiguredHost(host)) {
         return { ok: false, error: `Blocked private/internal host: ${host}` };
     }
 
@@ -176,7 +189,10 @@ export async function assertSafeBaseUrl(
     if (!trusted.ok) return trusted;
 
     const host = new URL(trusted.origin!).hostname.replace(/^\[|]$/g, '');
-    if (checkDns && (await resolvesToPrivateHost(host))) {
+    // 显式信任的私网主机豁免 DNS 私网拒绝（本身就是 LAN 地址，DNS 检查必然拒绝）；
+    // 公网主机名（即使被显式信任）仍走 DNS 检查，不放松 rebinding 防线。
+    const privateHostExplicitlyTrusted = isPrivateHost(host) && isExplicitlyConfiguredHost(host);
+    if (checkDns && !privateHostExplicitlyTrusted && (await resolvesToPrivateHost(host))) {
         return { ok: false, error: `Host resolves to private address: ${host}` };
     }
     return trusted;
