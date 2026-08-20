@@ -37,10 +37,21 @@ type OpenAIClientContext = {
     label: string;
 };
 
+type OpenAIRequestOptions = {
+    signal: AbortSignal;
+    timeout: number;
+};
+
+type AttemptControl = OpenAIRequestOptions & {
+    didTimeout: () => boolean;
+    cleanup: () => void;
+};
+
 // 一次原始请求 + 一次重试；请求失败后才切换同模型备用实例。
 // 保持有界，避免上游长时间挂起时把一次用户操作放大成无限等待。
 const MAX_TRANSIENT_ATTEMPTS = 2;
 const RETRY_DELAY_MS = 250;
+const REQUEST_DEADLINE_BUFFER_MS = 5000;
 
 const RETRYABLE_STATUS_CODES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 
@@ -75,7 +86,7 @@ function isTransientError(error: unknown): boolean {
     if (status !== undefined) return RETRYABLE_STATUS_CODES.has(status);
 
     const message = getErrorText(error);
-    return /connection error|fetch failed|network|econnreset|econnrefused|enotfound|eai_again|etimedout|socket hang up|timed out|timeout|\b(?:408|409|425|429|500|502|503|504)\b/.test(message);
+    return /connection error|fetch failed|network|aborted|abort|econnreset|econnrefused|enotfound|eai_again|etimedout|socket hang up|timed out|timeout|\b(?:408|409|425|429|500|502|503|504)\b/.test(message);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -163,53 +174,107 @@ export class OpenAIProvider implements AIService {
 
     private async withTransientRetry<T>(
         operation: string,
-        request: (context: OpenAIClientContext) => Promise<T>
+        request: (context: OpenAIClientContext, options: OpenAIRequestOptions) => Promise<T>
     ): Promise<T> {
         let lastError: unknown;
+        // 前端也会在 analyzeTimeoutMs 后中止请求。为避免服务端继续在浏览器
+        // 已经放弃后重试，预留一个小缓冲，让 API 有机会返回准确的错误类型。
+        const deadline = Date.now() + Math.max(
+            1,
+            this.requestTimeoutMs - Math.min(
+                REQUEST_DEADLINE_BUFFER_MS,
+                Math.max(1, Math.floor(this.requestTimeoutMs / 10)),
+            ),
+        );
 
         for (let contextIndex = 0; contextIndex < this.clientContexts.length; contextIndex += 1) {
             const context = this.clientContexts[contextIndex];
 
             for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
+                const attemptsRemaining =
+                    (this.clientContexts.length - contextIndex) * MAX_TRANSIENT_ATTEMPTS - (attempt - 1);
+                const control = this.createAttemptControl(deadline, attemptsRemaining);
+                if (!control) {
+                    throw this.createTimeoutError(lastError);
+                }
+
                 try {
-                    return await request(context);
+                    return await request(context, control);
                 } catch (error) {
                     lastError = error;
-                    const transient = isTransientError(error);
-                    const canRetry = transient && attempt < MAX_TRANSIENT_ATTEMPTS;
-                    const canFailover = transient && contextIndex < this.clientContexts.length - 1;
+                    const transient = control.didTimeout() || isTransientError(error);
+                    const budgetRemaining = deadline - Date.now();
+                    const canRetry = transient && attempt < MAX_TRANSIENT_ATTEMPTS && budgetRemaining > 0;
+                    const canFailover = transient && contextIndex < this.clientContexts.length - 1 && budgetRemaining > 0;
 
-                    if (!canRetry && !canFailover) throw error;
+                    if (!canRetry && !canFailover) {
+                        if (control.didTimeout() || budgetRemaining <= 0) {
+                            throw this.createTimeoutError(error);
+                        }
+                        throw error;
+                    }
 
                     logger.warn({
                         operation,
                         instance: context.label,
                         attempt,
                         status: getErrorStatus(error),
+                        timeoutMs: control.timeout,
+                        remainingMs: Math.max(0, budgetRemaining),
                         action: canRetry ? 'retry' : 'failover',
                     }, 'Transient AI request failure');
 
                     if (canRetry) {
-                        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * attempt));
+                        const delayMs = RETRY_DELAY_MS * attempt;
+                        if (Date.now() + delayMs >= deadline) {
+                            if (canFailover) {
+                                break;
+                            }
+                            throw this.createTimeoutError(error);
+                        }
+                        await new Promise((resolve) => setTimeout(resolve, delayMs));
                     } else {
                         // 当前实例的最后一次尝试失败后立即切换备用实例。
                         break;
                     }
+                } finally {
+                    control.cleanup();
                 }
             }
         }
 
+        if (Date.now() >= deadline) {
+            throw this.createTimeoutError(lastError);
+        }
         throw lastError instanceof Error ? lastError : new Error('AI request failed');
     }
 
-    /**
-     * 创建带超时的 AbortSignal，用于显式控制 AI 调用时长。
-     * 返回 signal 与 cleanup，调用方在 finally 中 clearTimeout 防止泄漏。
-     */
-    private createTimeoutSignal(): { signal: AbortSignal; timeoutId: NodeJS.Timeout } {
+    private createAttemptControl(deadline: number, attemptsRemaining: number): AttemptControl | null {
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) return null;
+
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), this.requestTimeoutMs);
-        return { signal: controller.signal, timeoutId };
+        const timeout = Math.max(1, Math.floor(remainingMs / Math.max(1, attemptsRemaining)));
+        let didTimeout = false;
+        const timeoutId = setTimeout(() => {
+            didTimeout = true;
+            controller.abort();
+        }, timeout);
+
+        return {
+            signal: controller.signal,
+            timeout,
+            didTimeout: () => didTimeout,
+            cleanup: () => clearTimeout(timeoutId),
+        };
+    }
+
+    private createTimeoutError(cause?: unknown): Error {
+        const error = new Error('AI_TIMEOUT_ERROR: AI request deadline exceeded');
+        if (cause !== undefined) {
+            error.cause = cause;
+        }
+        return error;
     }
 
     private adaptMessagesForLongCat(messages: OpenAIMessage[]): OpenAIMessage[] {
@@ -368,7 +433,7 @@ export class OpenAIProvider implements AIService {
 
             logger.box('📤 API Request (发送给 AI 的原始请求)', JSON.stringify(requestParamsForLog, null, 2));
 
-            const response = await this.withTransientRetry('image analysis', async (context) => {
+            const response = await this.withTransientRetry('image analysis', async (context, requestOptions) => {
                 if (context.isLongCat) {
                     // LongCat 使用不同的多模态格式，绕过 SDK 直接请求
                     const messages = this.adaptMessagesForLongCat([
@@ -386,34 +451,29 @@ export class OpenAIProvider implements AIService {
                         },
                     ]);
 
-                    const { signal: longcatSignal, timeoutId: longcatTimeoutId } = this.createTimeoutSignal();
-                    try {
-                        const res = await fetch(`${context.baseURL}/chat/completions`, {
-                            method: 'POST',
-                            redirect: 'error',
-                            headers: {
-                                'Authorization': `Bearer ${context.apiKey}`,
-                                'Content-Type': 'application/json',
-                            },
-                            signal: longcatSignal,
-                            body: JSON.stringify({
-                                model: context.model,
-                                messages,
-                                max_tokens: 8192,
-                                ...getDisableThinkingBody(),
-                            }),
-                        });
+                    const res = await fetch(`${context.baseURL}/chat/completions`, {
+                        method: 'POST',
+                        redirect: 'error',
+                        headers: {
+                            'Authorization': `Bearer ${context.apiKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        signal: requestOptions.signal,
+                        body: JSON.stringify({
+                            model: context.model,
+                            messages,
+                            max_tokens: 8192,
+                            ...getDisableThinkingBody(),
+                        }),
+                    });
 
-                        if (!res.ok) {
-                            const errBody = await res.text();
-                            logger.error({ status: res.status, body: errBody }, 'LongCat API error');
-                            throw new Error(`${res.status} status code (${errBody})`);
-                        }
-
-                        return await res.json() as CompletionResponseLike;
-                    } finally {
-                        clearTimeout(longcatTimeoutId);
+                    if (!res.ok) {
+                        const errBody = await res.text();
+                        logger.error({ status: res.status, body: errBody }, 'LongCat API error');
+                        throw new Error(`${res.status} status code (${errBody})`);
                     }
+
+                    return await res.json() as CompletionResponseLike;
                 }
 
                 const params: ChatCompletionCreateParamsNonStreaming = {
@@ -439,7 +499,7 @@ export class OpenAIProvider implements AIService {
                     max_tokens: 8192,
                     ...getDisableThinkingBody(),
                 };
-                return await context.client.chat.completions.create(params) as CompletionResponseLike;
+                return await context.client.chat.completions.create(params, requestOptions) as CompletionResponseLike;
             });
 
             logger.box('📦 Full API Response', JSON.stringify(response, null, 2));
@@ -491,7 +551,7 @@ export class OpenAIProvider implements AIService {
         logger.box('📝 User Prompt', userPrompt);
 
         try {
-            const response = await this.withTransientRetry('similar question generation', (context) => {
+            const response = await this.withTransientRetry('similar question generation', (context, requestOptions) => {
                 const params: ChatCompletionCreateParamsNonStreaming = {
                     model: context.model,
                     messages: [
@@ -502,7 +562,7 @@ export class OpenAIProvider implements AIService {
                     max_tokens: 8192,
                     ...getDisableThinkingBody(),
                 };
-                return context.client.chat.completions.create(params) as Promise<CompletionResponseLike>;
+                return context.client.chat.completions.create(params, requestOptions) as Promise<CompletionResponseLike>;
             });
 
             const text = extractResponseText(response.choices[0]?.message);
@@ -568,7 +628,7 @@ export class OpenAIProvider implements AIService {
             };
             logger.debug({ requestParams }, 'Request parameters');
 
-            const response = await this.withTransientRetry('reanswer question', (context) => {
+            const response = await this.withTransientRetry('reanswer question', (context, requestOptions) => {
                 const params: ChatCompletionCreateParamsNonStreaming = {
                     model: context.model,
                     messages: [
@@ -578,7 +638,7 @@ export class OpenAIProvider implements AIService {
                     max_tokens: 8192,
                     ...getDisableThinkingBody(),
                 };
-                return context.client.chat.completions.create(params) as Promise<CompletionResponseLike>;
+                return context.client.chat.completions.create(params, requestOptions) as Promise<CompletionResponseLike>;
             });
 
             logger.debug({ response: JSON.stringify(response) }, 'Full API response');
@@ -634,7 +694,7 @@ export class OpenAIProvider implements AIService {
         }, 'Judge Answer Request');
 
         try {
-            const response = await this.withTransientRetry('answer judging', (context) => {
+            const response = await this.withTransientRetry('answer judging', (context, requestOptions) => {
                 const params: ChatCompletionCreateParamsNonStreaming = {
                     model: context.model,
                     messages: [
@@ -644,7 +704,7 @@ export class OpenAIProvider implements AIService {
                     max_tokens: 256,
                     ...getDisableThinkingBody(),
                 };
-                return context.client.chat.completions.create(params) as Promise<CompletionResponseLike>;
+                return context.client.chat.completions.create(params, requestOptions) as Promise<CompletionResponseLike>;
             });
 
             const text = extractResponseText(response.choices[0]?.message);
@@ -676,7 +736,7 @@ export class OpenAIProvider implements AIService {
         }, 'GeoGebra Analysis Request');
 
         try {
-            const response = await this.withTransientRetry('GeoGebra analysis', (context) => {
+            const response = await this.withTransientRetry('GeoGebra analysis', (context, requestOptions) => {
                 const params: ChatCompletionCreateParamsNonStreaming = {
                     model: context.model,
                     messages: [
@@ -686,7 +746,7 @@ export class OpenAIProvider implements AIService {
                     max_tokens: 4096,
                     ...getDisableThinkingBody(),
                 };
-                return context.client.chat.completions.create(params) as Promise<CompletionResponseLike>;
+                return context.client.chat.completions.create(params, requestOptions) as Promise<CompletionResponseLike>;
             });
 
             const text = extractResponseText(response.choices[0]?.message);

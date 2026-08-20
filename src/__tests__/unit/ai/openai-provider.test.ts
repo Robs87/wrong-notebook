@@ -284,6 +284,14 @@ describe('OpenAI Provider 错误处理', () => {
 
         expect(result.questionText).toBe('Q');
         expect(mockCompletionCreate).toHaveBeenCalledTimes(2);
+        const firstRequestOptions = mockCompletionCreate.mock.calls[0]?.[1] as {
+            signal?: AbortSignal;
+            timeout?: number;
+        } | undefined;
+        expect(firstRequestOptions?.signal).toBeDefined();
+        // 超时是整次 AI 操作的预算切片，而不是给每次重试重复 180 秒。
+        expect(firstRequestOptions?.timeout).toBeGreaterThan(80_000);
+        expect(firstRequestOptions?.timeout).toBeLessThan(180_000);
     });
 
     it('主实例重试耗尽后应切换到备用实例', async () => {
