@@ -14,6 +14,7 @@ export interface OpenAIInstance {
     name: string;
     apiKey: string;
     baseUrl: string;
+    proxyUrl?: string;
     model: string;
 }
 
@@ -116,7 +117,7 @@ const DEFAULT_CONFIG: AppConfig = {
     },
 };
 
-// ============ 密钥加密/解密（仅对 apiKey 字段） ============
+// ============ 密钥加密/解密（apiKey 与实例代理凭据） ============
 
 /** 加密 AppConfig 中的所有密钥字段，返回可安全入库的副本。 */
 function encryptAppConfig(config: AppConfig): AppConfig {
@@ -131,6 +132,7 @@ function encryptAppConfig(config: AppConfig): AppConfig {
         encrypted.openai.instances = encrypted.openai.instances.map((inst) => ({
             ...inst,
             apiKey: encryptSecret(inst.apiKey),
+            proxyUrl: inst.proxyUrl ? encryptSecret(inst.proxyUrl) : inst.proxyUrl,
         }));
     }
     return encrypted;
@@ -149,6 +151,7 @@ function decryptAppConfig(config: AppConfig): AppConfig {
         decrypted.openai.instances = decrypted.openai.instances.map((inst) => ({
             ...inst,
             apiKey: decryptSecret(inst.apiKey),
+            proxyUrl: inst.proxyUrl ? decryptSecret(inst.proxyUrl) : inst.proxyUrl,
         }));
     }
     return decrypted;

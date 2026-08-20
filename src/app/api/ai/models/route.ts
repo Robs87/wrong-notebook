@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { assertSafeBaseUrl, DEFAULT_ALLOWED_HOSTS } from '@/lib/url-safety';
+import { getProxyAgent, normalizeProxyUrl } from '@/lib/proxy';
 
 const logger = createLogger('api:ai:models');
 
@@ -54,9 +55,10 @@ async function fetchGeminiModels(apiKey: string, baseUrl: string): Promise<Model
         });
 }
 
-async function fetchOpenAIModels(apiKey: string, baseUrl: string): Promise<ModelInfo[]> {
+async function fetchOpenAIModels(apiKey: string, baseUrl: string, proxyUrl?: string): Promise<ModelInfo[]> {
     // baseUrl 已经过 assertSafeBaseUrl 校验
     const url = `${baseUrl}/models`;
+    const proxyAgent = getProxyAgent(proxyUrl);
 
     const response = await fetch(url, {
         redirect: 'error',
@@ -64,6 +66,7 @@ async function fetchOpenAIModels(apiKey: string, baseUrl: string): Promise<Model
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
         },
+        ...(proxyAgent ? { dispatcher: proxyAgent } : {}),
     });
 
     if (!response.ok) {
@@ -97,6 +100,7 @@ export async function POST(request: NextRequest) {
         const provider = typeof body?.provider === 'string' ? body.provider : null;
         const apiKey = typeof body?.apiKey === 'string' ? body.apiKey : null;
         const baseUrlRaw = typeof body?.baseUrl === 'string' ? body.baseUrl : null;
+        const proxyUrl = typeof body?.proxyUrl === 'string' ? body.proxyUrl : undefined;
 
         if (!apiKey) {
             return NextResponse.json(
@@ -124,11 +128,21 @@ export async function POST(request: NextRequest) {
             );
         }
 
+        if (provider === 'openai') {
+            const proxyValidation = normalizeProxyUrl(proxyUrl);
+            if (!proxyValidation.ok) {
+                return NextResponse.json(
+                    { error: 'Invalid or unsupported proxy URL', models: [] },
+                    { status: 400 }
+                );
+            }
+        }
+
         let models: ModelInfo[] = [];
         if (provider === 'gemini') {
             models = await fetchGeminiModels(apiKey, safe.origin!);
         } else {
-            models = await fetchOpenAIModels(apiKey, safe.origin!);
+            models = await fetchOpenAIModels(apiKey, safe.origin!, proxyUrl);
         }
 
         return NextResponse.json({ models });

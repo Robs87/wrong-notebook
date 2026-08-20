@@ -266,4 +266,21 @@ describe('POST /api/ai/models - OpenAI provider', () => {
         expect(body.models).toEqual([]);
         expect(body.error).toBe('Failed to fetch models');
     });
+
+    it('OpenAI 模型列表请求应使用实例级代理，而不是依赖全局代理', async () => {
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({ data: [{ id: 'test-model' }] }),
+        });
+
+        const req = makeRequest({
+            apiKey: 'test-key',
+            baseUrl: 'https://api.example.com/v1',
+            proxyUrl: 'http://proxy.example.com:7890',
+        });
+        await POST(req);
+
+        const requestOptions = mockFetch.mock.calls[0]?.[1] as { dispatcher?: unknown } | undefined;
+        expect(requestOptions?.dispatcher).toBeDefined();
+    });
 });

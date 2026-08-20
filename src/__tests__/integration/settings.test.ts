@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
                 apiKey: 'sk-test-key',
                 baseUrl: 'https://api.openai.com/v1',
                 model: 'gpt-4o',
+                proxyUrl: 'http://proxy.example.com:7890',
             }],
             activeInstanceId: 'test-instance',
         },
@@ -111,6 +112,7 @@ describe('/api/settings', () => {
 
             expect(response.status).toBe(200);
             expect(data.openai.instances[0].apiKey).toBe('********');
+            expect(data.openai.instances[0].proxyUrl).toBe('********');
             expect(data.gemini.apiKey).toBe('********');
         });
 
@@ -163,6 +165,30 @@ describe('/api/settings', () => {
                             apiKey: 'sk-test',
                             baseUrl: 'http://127.0.0.1:8080/v1',
                             model: 'test-model',
+                        }],
+                    },
+                }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await POST(request);
+
+            expect(response.status).toBe(400);
+            expect(mocks.mockUpdateAppConfig).not.toHaveBeenCalled();
+        });
+
+        it('应该拒绝不支持协议的实例级代理地址', async () => {
+            const request = new Request('http://localhost/api/settings', {
+                method: 'POST',
+                body: JSON.stringify({
+                    openai: {
+                        instances: [{
+                            id: 'proxy-instance',
+                            name: 'Proxy',
+                            apiKey: 'sk-test',
+                            baseUrl: 'https://api.openai.com/v1',
+                            model: 'test-model',
+                            proxyUrl: 'ftp://proxy.example.com:21',
                         }],
                     },
                 }),
@@ -264,6 +290,7 @@ describe('/api/settings', () => {
                             apiKey: '********',
                             baseUrl: 'https://api.openai.com/v1',
                             model: 'gpt-4o',
+                            proxyUrl: '********',
                         }],
                     },
                     gemini: { apiKey: '********' },
@@ -279,6 +306,7 @@ describe('/api/settings', () => {
             // OpenAI instances 应该保留，且 apiKey 应为原有值
             expect(updateCall.openai?.instances?.length).toBe(1);
             expect(updateCall.openai?.instances?.[0]?.apiKey).toBe('sk-test-key');
+            expect(updateCall.openai?.instances?.[0]?.proxyUrl).toBe('http://proxy.example.com:7890');
             expect(updateCall.gemini?.apiKey).toBe('AIza-test-key');
         });
 

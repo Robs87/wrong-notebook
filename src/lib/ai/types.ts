@@ -58,6 +58,8 @@ export interface AIConfig {
     name?: string;
     apiKey?: string;
     baseUrl?: string;
+    /** Optional proxy used only by this OpenAI-compatible instance. */
+    proxyUrl?: string;
     model?: string;
     // Azure OpenAI 特有字段
     azureDeployment?: string;   // Azure 部署名称

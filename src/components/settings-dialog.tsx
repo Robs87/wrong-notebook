@@ -626,6 +626,7 @@ export function SettingsDialog() {
                     provider: 'openai',
                     apiKey: instance.apiKey,
                     baseUrl: instance.baseUrl,
+                    proxyUrl: instance.proxyUrl,
                     model: instance.model,
                     language: language
                 };
@@ -1061,10 +1062,21 @@ export function SettingsDialog() {
                                                         className={!getSelectedInstance()?.baseUrl?.trim() ? 'border-destructive' : ''}
                                                     />
                                                 </div>
+                                                <div className="space-y-2">
+                                                    <Label>实例代理 URL（可选）</Label>
+                                                    <Input
+                                                        type="password"
+                                                        value={getSelectedInstance()?.proxyUrl || ''}
+                                                        onChange={(e) => updateOpenAIInstance('proxyUrl', e.target.value)}
+                                                        placeholder="http://127.0.0.1:7890"
+                                                    />
+                                                    <p className="text-xs text-muted-foreground">留空表示直连；仅当前实例使用，不影响其他模型。</p>
+                                                </div>
                                                 <ModelSelector
                                                     provider="openai"
                                                     apiKey={getSelectedInstance()?.apiKey}
                                                     baseUrl={getSelectedInstance()?.baseUrl}
+                                                    proxyUrl={getSelectedInstance()?.proxyUrl}
                                                     currentModel={getSelectedInstance()?.model}
                                                     onModelChange={(model) => updateOpenAIInstance('model', model)}
                                                 />

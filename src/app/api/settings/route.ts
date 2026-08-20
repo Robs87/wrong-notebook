@@ -6,6 +6,7 @@ import { badRequest, forbidden, internalError, unauthorized } from "@/lib/api-er
 import { createLogger } from "@/lib/logger";
 import { OpenAIInstance } from "@/types/api";
 import { assertSafeBaseUrl, DEFAULT_ALLOWED_HOSTS } from "@/lib/url-safety";
+import { normalizeProxyUrl } from "@/lib/proxy";
 
 const logger = createLogger('api:settings');
 
@@ -28,6 +29,7 @@ function sanitizeConfig(config: ReturnType<typeof getAppConfig>, includeSecrets:
             instances: (config.openai?.instances || []).map(instance => ({
                 ...instance,
                 apiKey: maskSecret(instance.apiKey),
+                proxyUrl: maskSecret(instance.proxyUrl),
             })),
         },
         gemini: {
@@ -83,15 +85,12 @@ export async function POST(req: Request) {
         if (body.openai?.instances) {
             const currentInstances = currentConfig.openai?.instances || [];
             body.openai.instances = body.openai.instances.map((instance: OpenAIInstance) => {
-                if (instance.apiKey === '********') {
-                    // 查找原有实例并保留其 API Key
-                    const originalInstance = currentInstances.find((i: OpenAIInstance) => i.id === instance.id);
-                    return {
-                        ...instance,
-                        apiKey: originalInstance?.apiKey || '',
-                    };
-                }
-                return instance;
+                const originalInstance = currentInstances.find((i: OpenAIInstance) => i.id === instance.id);
+                return {
+                    ...instance,
+                    ...(instance.apiKey === '********' ? { apiKey: originalInstance?.apiKey || '' } : {}),
+                    ...(instance.proxyUrl === '********' ? { proxyUrl: originalInstance?.proxyUrl || '' } : {}),
+                };
             });
         }
 
@@ -119,6 +118,22 @@ export async function POST(req: Request) {
             if (!safe.ok) {
                 logger.warn({ label: candidate.label, reason: safe.error }, 'Blocked unsafe AI endpoint');
                 return badRequest(`${candidate.label} is unsafe or points to a private network`);
+            }
+        }
+
+        const configuredProxyUrls: Array<{ label: string; value?: unknown }> = Array.isArray(body.openai?.instances)
+            ? body.openai.instances.map((instance: OpenAIInstance) => ({
+                label: `OpenAI instance ${instance.id} proxy URL`,
+                value: instance.proxyUrl,
+            }))
+            : [];
+
+        for (const candidate of configuredProxyUrls) {
+            if (typeof candidate.value !== 'string' || !candidate.value.trim()) continue;
+            const valid = normalizeProxyUrl(candidate.value);
+            if (!valid.ok) {
+                logger.warn({ label: candidate.label, reason: valid.error }, 'Blocked invalid instance proxy URL');
+                return badRequest(`${candidate.label} is invalid or uses an unsupported protocol`);
             }
         }
 

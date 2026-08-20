@@ -6,6 +6,7 @@ import { GeminiProvider } from '@/lib/ai/gemini-provider';
 import { AzureOpenAIProvider } from '@/lib/ai/azure-provider';
 import { createLogger } from '@/lib/logger';
 import { assertSafeBaseUrl, DEFAULT_ALLOWED_HOSTS } from '@/lib/url-safety';
+import { normalizeProxyUrl } from '@/lib/proxy';
 
 const logger = createLogger('api:ai:test');
 
@@ -74,6 +75,7 @@ export interface AITestRequest {
     provider: 'openai' | 'gemini' | 'azure';
     apiKey: string;
     baseUrl?: string;
+    proxyUrl?: string;
     model?: string;
     // Azure 特有
     endpoint?: string;
@@ -104,7 +106,7 @@ export async function POST(request: NextRequest) {
         }
 
         const body: AITestRequest = await request.json();
-        const { provider, apiKey, baseUrl, model, endpoint, deploymentName, apiVersion, language = 'zh' } = body;
+        const { provider, apiKey, baseUrl, proxyUrl, model, endpoint, deploymentName, apiVersion, language = 'zh' } = body;
 
         if (!provider || !apiKey) {
             return NextResponse.json({ error: 'Missing provider or apiKey' }, { status: 400 });
@@ -123,7 +125,17 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        logger.info({ provider, model, baseUrl: baseUrl || endpoint }, 'AI 连接测试开始');
+        if (provider === 'openai') {
+            const proxyValidation = normalizeProxyUrl(proxyUrl);
+            if (!proxyValidation.ok) {
+                return NextResponse.json(
+                    { error: 'Invalid or unsupported proxy URL' },
+                    { status: 400 }
+                );
+            }
+        }
+
+        logger.info({ provider, model, baseUrl: baseUrl || endpoint, proxyConfigured: Boolean(proxyUrl) }, 'AI 连接测试开始');
 
         let textSupport = false;
         let visionSupport = false;
@@ -141,7 +153,7 @@ export async function POST(request: NextRequest) {
         // 测试 1: 视觉（多模态）能力
         try {
             if (provider === 'openai') {
-                const openai = new OpenAIProvider({ apiKey, baseUrl, model });
+                const openai = new OpenAIProvider({ apiKey, baseUrl, model, proxyUrl });
                 const result = await openai.analyzeImage(TEST_IMAGE_BASE64, TEST_IMAGE_MIME, language);
                 if (result.questionText || result.analysis) {
                     // 视觉成功 → 文本和视觉都支持，一步完成
@@ -196,7 +208,7 @@ export async function POST(request: NextRequest) {
         if (!textSupport && !textError) {
             try {
                 if (provider === 'openai') {
-                    const openai = new OpenAIProvider({ apiKey, baseUrl, model });
+                    const openai = new OpenAIProvider({ apiKey, baseUrl, model, proxyUrl });
                     const result = await openai.generateSimilarQuestion(
                         '1+1=?',
                         ['基础算术'],

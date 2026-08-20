@@ -9,6 +9,8 @@ import { createLogger } from '../logger';
 import { normalizeMistakeStatusForSave } from '../mistake-status';
 import { extractResponseText, extractTag, parseJsonLoose, recoverAnalysisFromAnswerText } from './response-parser';
 import { assertTrustedBaseUrl } from '../url-safety';
+import { getProxyAgent, normalizeProxyUrl } from '../proxy';
+import { ProxyAgent } from 'undici';
 
 const logger = createLogger('ai:openai');
 
@@ -35,6 +37,7 @@ type OpenAIClientContext = {
     apiKey: string;
     isLongCat: boolean;
     label: string;
+    proxyAgent?: ProxyAgent;
 };
 
 type OpenAIRequestOptions = {
@@ -148,6 +151,7 @@ export class OpenAIProvider implements AIService {
             baseURL: this.baseURL,
             timeoutMs: this.requestTimeoutMs,
             hasKey: true,
+            proxyConfigured: Boolean(primary.proxyAgent),
             fallbackCount: this.clientContexts.length - 1,
             visionFallbackCount: this.visionClientContexts.length - this.clientContexts.length,
         }, 'AI Provider initialized');
@@ -174,6 +178,15 @@ export class OpenAIProvider implements AIService {
         }
 
         const origin = trustedBaseUrl.origin!;
+        const proxyValidation = normalizeProxyUrl(config?.proxyUrl);
+        if (!proxyValidation.ok) {
+            if (primary) {
+                throw new Error(`AI_CONFIG_ERROR: invalid OpenAI instance proxy URL (${proxyValidation.error})`);
+            }
+            logger.warn({ instance: config?.name || config?.id || 'unnamed', reason: proxyValidation.error }, 'Skipping invalid OpenAI instance proxy');
+            return null;
+        }
+        const proxyAgent = getProxyAgent(proxyValidation.url);
         const client = new OpenAI({
             apiKey,
             baseURL: origin,
@@ -184,6 +197,7 @@ export class OpenAIProvider implements AIService {
             defaultHeaders: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             },
+            ...(proxyAgent ? { fetchOptions: { dispatcher: proxyAgent } } : {}),
         });
 
         return {
@@ -193,6 +207,7 @@ export class OpenAIProvider implements AIService {
             apiKey,
             isLongCat: origin.includes('longcat.chat'),
             label: config?.name || config?.id || origin,
+            proxyAgent,
         };
     }
 
@@ -504,6 +519,7 @@ export class OpenAIProvider implements AIService {
                             'Content-Type': 'application/json',
                         },
                         signal: requestOptions.signal,
+                        ...(context.proxyAgent ? { dispatcher: context.proxyAgent } : {}),
                         body: JSON.stringify({
                             model: context.model,
                             messages,

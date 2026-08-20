@@ -106,6 +106,7 @@ export interface OpenAIInstance {
     name: string;         // 用户自定义名称
     apiKey: string;
     baseUrl: string;
+    proxyUrl?: string;
     model: string;
 }
 

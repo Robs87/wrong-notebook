@@ -6,11 +6,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockCompletionCreate = vi.hoisted(() => vi.fn());
+const mockOpenAIOptions = vi.hoisted(() => vi.fn());
 
 // Mock OpenAI SDK
 vi.mock('openai', () => {
     return {
         default: class MockOpenAI {
+            constructor(options: unknown) {
+                mockOpenAIOptions(options);
+            }
+
             chat = {
                 completions: {
                     create: mockCompletionCreate,
@@ -197,6 +202,41 @@ describe('OpenAI Provider 响应解析', () => {
             expect(result.mistakeStatus).toBe('not_attempted');
             expect(result.requiresImage).toBe(false);
         });
+    });
+});
+
+describe('OpenAI Provider 实例级代理', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('配置 proxyUrl 时只为该 OpenAI client 注入 dispatcher', () => {
+        new OpenAIProvider({
+            apiKey: 'test-key',
+            baseUrl: 'https://api.openai.com/v1',
+            model: 'test-model',
+            proxyUrl: 'http://proxy.example.com:7890',
+        });
+
+        const options = mockOpenAIOptions.mock.calls.at(-1)?.[0] as {
+            fetchOptions?: { dispatcher?: unknown };
+        } | undefined;
+
+        expect(options?.fetchOptions?.dispatcher).toBeDefined();
+    });
+
+    it('未配置 proxyUrl 时保持直连，不设置 dispatcher', () => {
+        new OpenAIProvider({
+            apiKey: 'test-key',
+            baseUrl: 'https://api.openai.com/v1',
+            model: 'test-model',
+        });
+
+        const options = mockOpenAIOptions.mock.calls.at(-1)?.[0] as {
+            fetchOptions?: { dispatcher?: unknown };
+        } | undefined;
+
+        expect(options?.fetchOptions).toBeUndefined();
     });
 });
 

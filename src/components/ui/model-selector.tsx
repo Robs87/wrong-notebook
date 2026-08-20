@@ -21,11 +21,12 @@ interface ModelSelectorProps {
     provider: 'openai' | 'gemini';
     apiKey?: string;
     baseUrl?: string;
+    proxyUrl?: string;
     currentModel?: string;
     onModelChange: (model: string) => void;
 }
 
-export function ModelSelector({ provider, apiKey, baseUrl, currentModel, onModelChange }: ModelSelectorProps) {
+export function ModelSelector({ provider, apiKey, baseUrl, proxyUrl, currentModel, onModelChange }: ModelSelectorProps) {
     const { t } = useLanguage();
     const [models, setModels] = useState<AIModel[]>([]);
     const [loading, setLoading] = useState(false);
@@ -49,9 +50,9 @@ export function ModelSelector({ provider, apiKey, baseUrl, currentModel, onModel
 
         try {
             // API Key 通过 POST body 传输，避免出现在 URL / 日志 / Referer 中
-            const data = await apiClient.post<ModelsResponse, { provider: string; apiKey: string; baseUrl?: string }>(
+            const data = await apiClient.post<ModelsResponse, { provider: string; apiKey: string; baseUrl?: string; proxyUrl?: string }>(
                 '/api/ai/models',
-                { provider, apiKey, ...(baseUrl && { baseUrl }) }
+                { provider, apiKey, ...(baseUrl && { baseUrl }), ...(proxyUrl && { proxyUrl }) }
             );
 
             // Check if there's an error message in the response
