@@ -225,7 +225,12 @@ export class OpenAIProvider implements AIService {
                 } catch (error) {
                     lastError = error;
                     const transient = control.didTimeout() || isTransientError(error);
-                    const failoverEligible = control.didTimeout() || isFailoverError(error);
+                    // OpenAI-compatible网关常用 400 表示“当前模型不支持该媒体/模型名
+                    // 不存在”。只有图片请求拥有跨模型候选时才继续尝试，避免普通文本
+                    // 请求把真正的参数错误静默转给另一个同模型实例。
+                    const crossModelVisionFailover = contexts.length > this.clientContexts.length;
+                    const failoverEligible = control.didTimeout() || isFailoverError(error) ||
+                        (crossModelVisionFailover && getErrorStatus(error) === 400);
                     const budgetRemaining = deadline - Date.now();
                     const canRetry = transient && attempt < MAX_TRANSIENT_ATTEMPTS && budgetRemaining > 0;
                     const canFailover = failoverEligible && contextIndex < contexts.length - 1 && budgetRemaining > 0;

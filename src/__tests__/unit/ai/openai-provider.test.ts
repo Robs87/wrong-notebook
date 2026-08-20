@@ -364,6 +364,35 @@ describe('OpenAI Provider 错误处理', () => {
         expect(mockCompletionCreate).toHaveBeenCalledTimes(2);
     });
 
+    it('跨模型视觉备用遇到网关 400 时应继续尝试下一个已配置实例', async () => {
+        provider = new OpenAIProvider(
+            { apiKey: 'primary-key', baseUrl: 'https://api.openai.com/v1', model: 'primary-model', name: 'primary' },
+            [],
+            [
+                { apiKey: 'invalid-model-key', baseUrl: 'https://api.openai.com/v1', model: 'invalid-model', name: 'invalid-model' },
+                { apiKey: 'vision-key', baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4', model: 'vision-model', name: 'vision-fallback' },
+            ],
+        );
+        const invalidModel = Object.assign(new Error('400 model not found'), { status: 400 });
+        mockCompletionCreate
+            .mockRejectedValueOnce(new Error('502 Upstream request failed'))
+            .mockRejectedValueOnce(new Error('502 Upstream request failed'))
+            .mockRejectedValueOnce(invalidModel)
+            .mockResolvedValueOnce({
+                choices: [{
+                    message: {
+                        content: '<question_text>Q</question_text><answer_text>A</answer_text><analysis>An</analysis><subject>数学</subject>',
+                    },
+                }],
+            });
+
+        const result = await provider.analyzeImage('base64data');
+
+        expect(result.questionText).toBe('Q');
+        expect(mockCompletionCreate).toHaveBeenCalledTimes(4);
+        expect(mockCompletionCreate.mock.calls[3]?.[0]?.model).toBe('vision-model');
+    });
+
     describe('handleError', () => {
         it('应该将网络错误转换为 AI_CONNECTION_FAILED', () => {
             const networkError = new Error('fetch failed');
