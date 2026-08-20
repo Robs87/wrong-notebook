@@ -54,6 +54,9 @@ const RETRY_DELAY_MS = 250;
 const REQUEST_DEADLINE_BUFFER_MS = 5000;
 
 const RETRYABLE_STATUS_CODES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+// 这些状态不适合在同一实例上重复请求，但切换到用户配置的另一实例仍有意义：
+// 例如 active 渠道余额耗尽（402）、密钥失效（401）或模型只在某个网关开放（404）。
+const FAILOVER_STATUS_CODES = new Set([401, 402, 403, 404, ...RETRYABLE_STATUS_CODES]);
 
 function getErrorStatus(error: unknown): number | undefined {
     if (!isRecord(error)) return undefined;
@@ -89,6 +92,14 @@ function isTransientError(error: unknown): boolean {
     return /connection error|fetch failed|network|aborted|abort|econnreset|econnrefused|enotfound|eai_again|etimedout|socket hang up|timed out|timeout|\b(?:408|409|425|429|500|502|503|504)\b/.test(message);
 }
 
+function isFailoverError(error: unknown): boolean {
+    const status = getErrorStatus(error);
+    if (status !== undefined) return FAILOVER_STATUS_CODES.has(status);
+
+    const message = getErrorText(error);
+    return isTransientError(error) || /unauthorized|forbidden|not found|payment required|insufficient|quota|balance/.test(message);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
 }
@@ -98,8 +109,13 @@ export class OpenAIProvider implements AIService {
     private baseURL: string;
     private requestTimeoutMs: number;
     private clientContexts: OpenAIClientContext[];
+    private visionClientContexts: OpenAIClientContext[];
 
-    constructor(config?: AIConfig, fallbackConfigs: AIConfig[] = []) {
+    constructor(
+        config?: AIConfig,
+        fallbackConfigs: AIConfig[] = [],
+        visionFallbackConfigs: AIConfig[] = [],
+    ) {
         // 从全局配置读取单次 AI 调用的超时上限，避免上游挂起导致请求无限阻塞
         const appConfig = getAppConfig();
         this.requestTimeoutMs = appConfig?.timeouts?.analyze || 180000;
@@ -113,6 +129,10 @@ export class OpenAIProvider implements AIService {
             .map((candidate) => this.createClientContext(candidate, false))
             .filter((candidate): candidate is OpenAIClientContext => candidate !== null);
         this.clientContexts = [primary, ...fallbacks];
+        const visionFallbacks = visionFallbackConfigs
+            .map((candidate) => this.createClientContext(candidate, false))
+            .filter((candidate): candidate is OpenAIClientContext => candidate !== null);
+        this.visionClientContexts = [...this.clientContexts, ...visionFallbacks];
 
         // 保留主实例字段用于日志；实际请求由 withTransientRetry() 按主实例
         // → 同模型备用实例执行。
@@ -126,6 +146,7 @@ export class OpenAIProvider implements AIService {
             timeoutMs: this.requestTimeoutMs,
             hasKey: true,
             fallbackCount: this.clientContexts.length - 1,
+            visionFallbackCount: this.visionClientContexts.length - this.clientContexts.length,
         }, 'AI Provider initialized');
     }
 
@@ -174,7 +195,8 @@ export class OpenAIProvider implements AIService {
 
     private async withTransientRetry<T>(
         operation: string,
-        request: (context: OpenAIClientContext, options: OpenAIRequestOptions) => Promise<T>
+        request: (context: OpenAIClientContext, options: OpenAIRequestOptions) => Promise<T>,
+        contexts: OpenAIClientContext[] = this.clientContexts,
     ): Promise<T> {
         let lastError: unknown;
         // 前端也会在 analyzeTimeoutMs 后中止请求。为避免服务端继续在浏览器
@@ -187,12 +209,12 @@ export class OpenAIProvider implements AIService {
             ),
         );
 
-        for (let contextIndex = 0; contextIndex < this.clientContexts.length; contextIndex += 1) {
-            const context = this.clientContexts[contextIndex];
+        for (let contextIndex = 0; contextIndex < contexts.length; contextIndex += 1) {
+            const context = contexts[contextIndex];
 
             for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
                 const attemptsRemaining =
-                    (this.clientContexts.length - contextIndex) * MAX_TRANSIENT_ATTEMPTS - (attempt - 1);
+                    (contexts.length - contextIndex) * MAX_TRANSIENT_ATTEMPTS - (attempt - 1);
                 const control = this.createAttemptControl(deadline, attemptsRemaining);
                 if (!control) {
                     throw this.createTimeoutError(lastError);
@@ -203,9 +225,10 @@ export class OpenAIProvider implements AIService {
                 } catch (error) {
                     lastError = error;
                     const transient = control.didTimeout() || isTransientError(error);
+                    const failoverEligible = control.didTimeout() || isFailoverError(error);
                     const budgetRemaining = deadline - Date.now();
                     const canRetry = transient && attempt < MAX_TRANSIENT_ATTEMPTS && budgetRemaining > 0;
-                    const canFailover = transient && contextIndex < this.clientContexts.length - 1 && budgetRemaining > 0;
+                    const canFailover = failoverEligible && contextIndex < contexts.length - 1 && budgetRemaining > 0;
 
                     if (!canRetry && !canFailover) {
                         if (control.didTimeout() || budgetRemaining <= 0) {
@@ -217,6 +240,7 @@ export class OpenAIProvider implements AIService {
                     logger.warn({
                         operation,
                         instance: context.label,
+                        model: context.model,
                         attempt,
                         status: getErrorStatus(error),
                         timeoutMs: control.timeout,
@@ -500,7 +524,7 @@ export class OpenAIProvider implements AIService {
                     ...getDisableThinkingBody(),
                 };
                 return await context.client.chat.completions.create(params, requestOptions) as CompletionResponseLike;
-            });
+            }, this.visionClientContexts);
 
             logger.box('📦 Full API Response', JSON.stringify(response, null, 2));
 
@@ -780,7 +804,7 @@ export class OpenAIProvider implements AIService {
                 throw new Error("AI_TIMEOUT_ERROR");
             }
             // 配额/频率限制错误
-            if (msg.includes('quota') || msg.includes('额度') || msg.includes('rate limit') || msg.includes('429') || msg.includes('too many')) {
+            if (msg.includes('quota') || msg.includes('额度') || msg.includes('rate limit') || msg.includes('429') || msg.includes('402') || msg.includes('payment required') || msg.includes('insufficient') || msg.includes('balance') || msg.includes('too many')) {
                 throw new Error("AI_QUOTA_EXCEEDED");
             }
             // 权限/403 错误

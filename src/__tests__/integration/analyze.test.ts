@@ -288,7 +288,7 @@ describe('/api/analyze', () => {
             const response = await POST(request);
             const data = await response.json();
 
-            expect(response.status).toBe(500);
+            expect(response.status).toBe(502);
             expect(data.message).toBe('AI_CONNECTION_FAILED');
         });
 
@@ -311,6 +311,27 @@ describe('/api/analyze', () => {
 
             expect(response.status).toBe(500);
             expect(data.message).toBe('AI_RESPONSE_ERROR');
+        });
+
+        it('应该把 AI 服务不可用映射为 503，而不是伪装成应用内部错误', async () => {
+            mocks.mockAIService.analyzeImage.mockRejectedValue(
+                new Error('AI_SERVICE_UNAVAILABLE')
+            );
+
+            const request = new Request('http://localhost/api/analyze', {
+                method: 'POST',
+                body: JSON.stringify({
+                    imageBase64: 'data:image/png;base64,test...',
+                    language: 'zh',
+                }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await POST(request);
+            const data = await response.json();
+
+            expect(response.status).toBe(503);
+            expect(data.message).toBe('AI_SERVICE_UNAVAILABLE');
         });
 
         it('应该处理 Zod 验证错误', async () => {

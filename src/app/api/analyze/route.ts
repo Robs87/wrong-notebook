@@ -175,6 +175,13 @@ export async function POST(req: Request) {
             errorMessage = 'AI_RESPONSE_ERROR';
         }
 
-        return createErrorResponse(errorMessage, 500, ErrorCode.AI_ERROR, errorMessageText);
+        const status = errorMessage === 'AI_SERVICE_UNAVAILABLE'
+            ? 503
+            : errorMessage === 'AI_TIMEOUT_ERROR'
+                ? 504
+                : errorMessage === 'AI_CONNECTION_FAILED'
+                    ? 502
+                    : 500;
+        return createErrorResponse(errorMessage, status, ErrorCode.AI_ERROR, errorMessageText);
     }
 }

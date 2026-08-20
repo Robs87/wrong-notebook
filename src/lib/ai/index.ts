@@ -18,18 +18,26 @@ export function getAIService(): AIService {
     if (provider === "openai") {
         const activeConfig = getActiveOpenAIConfig();
         const activeModel = activeConfig?.model || 'gpt-4o';
-        // 仅将同模型的其它已配置实例作为瞬时故障备用，避免把用户主动配置的
-        // 不同模型/协议实例悄悄混入同一次请求。
-        const fallbackConfigs = (config.openai?.instances || []).filter((instance) => (
+        const configuredFallbacks = (config.openai?.instances || []).filter((instance) => (
             instance.id !== activeConfig?.id &&
-            !!instance.apiKey &&
+            !!instance.apiKey
+        ));
+        // 普通文本操作只在同模型实例之间故障转移，避免改变用户主动选择的模型。
+        const fallbackConfigs = configuredFallbacks.filter((instance) => (
             (instance.model || 'gpt-4o') === activeModel
+        ));
+        // 图片分析是多模态操作：同模型渠道全部不可用时，允许使用用户已经明确
+        // 配置的其它 OpenAI-compatible 实例作为最后一级视觉备用。若端点/模型不
+        // 支持图片，provider 会将其视为该渠道失败并继续尝试下一个实例。
+        const visionFallbackConfigs = configuredFallbacks.filter((instance) => (
+            (instance.model || 'gpt-4o') !== activeModel
         ));
         logger.info({
             activeInstance: activeConfig?.name,
             fallbackInstances: fallbackConfigs.map((instance) => instance.name),
+            visionFallbackInstances: visionFallbackConfigs.map((instance) => instance.name),
         }, 'Using OpenAI Provider');
-        return new OpenAIProvider(activeConfig, fallbackConfigs);
+        return new OpenAIProvider(activeConfig, fallbackConfigs, visionFallbackConfigs);
     } else if (provider === "azure") {
         logger.info({ deployment: config.azure?.deploymentName }, 'Using Azure OpenAI Provider');
         return new AzureOpenAIProvider(config.azure);

@@ -316,6 +316,54 @@ describe('OpenAI Provider 错误处理', () => {
         expect(mockCompletionCreate).toHaveBeenCalledTimes(3);
     });
 
+    it('图片分析在同模型备用耗尽后才切换到显式配置的跨模型视觉备用', async () => {
+        provider = new OpenAIProvider(
+            { apiKey: 'primary-key', baseUrl: 'https://api.openai.com/v1', model: 'agnes-2.5-pro', name: 'primary' },
+            [{ apiKey: 'same-model-key', baseUrl: 'https://api.openai.com/v1', model: 'agnes-2.5-pro', name: 'same-model' }],
+            [{ apiKey: 'vision-key', baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4', model: 'vision-model', name: 'vision-fallback' }],
+        );
+        mockCompletionCreate
+            .mockRejectedValueOnce(new Error('502 Upstream request failed'))
+            .mockRejectedValueOnce(new Error('502 Upstream request failed'))
+            .mockRejectedValueOnce(new Error('502 Upstream request failed'))
+            .mockRejectedValueOnce(new Error('502 Upstream request failed'))
+            .mockResolvedValueOnce({
+                choices: [{
+                    message: {
+                        content: '<question_text>Q</question_text><answer_text>A</answer_text><analysis>An</analysis><subject>数学</subject>',
+                    },
+                }],
+            });
+
+        const result = await provider.analyzeImage('base64data');
+
+        expect(result.questionText).toBe('Q');
+        expect(mockCompletionCreate).toHaveBeenCalledTimes(5);
+        expect(mockCompletionCreate.mock.calls[4]?.[0]?.model).toBe('vision-model');
+    });
+
+    it('active 渠道返回 402 时应直接切换备用，而不是在余额耗尽的渠道上重试', async () => {
+        provider = new OpenAIProvider(
+            { apiKey: 'primary-key', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o', name: 'primary' },
+            [{ apiKey: 'fallback-key', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o', name: 'fallback' }],
+        );
+        const paymentRequired = Object.assign(new Error('402 Payment Required'), { status: 402 });
+        mockCompletionCreate
+            .mockRejectedValueOnce(paymentRequired)
+            .mockResolvedValueOnce({
+                choices: [{
+                    message: {
+                        content: '<question_text>Q</question_text><answer_text>A</answer_text><analysis>An</analysis><subject>数学</subject>',
+                    },
+                }],
+            });
+
+        const result = await provider.analyzeImage('base64data');
+
+        expect(result.questionText).toBe('Q');
+        expect(mockCompletionCreate).toHaveBeenCalledTimes(2);
+    });
+
     describe('handleError', () => {
         it('应该将网络错误转换为 AI_CONNECTION_FAILED', () => {
             const networkError = new Error('fetch failed');
