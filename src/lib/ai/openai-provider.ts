@@ -28,6 +28,11 @@ type CompletionResponseLike = {
     choices: Array<{
         message?: unknown;
     }>;
+    usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+    };
 };
 
 type OpenAIClientContext = {
@@ -57,7 +62,11 @@ const RETRY_DELAY_MS = 250;
 const REQUEST_DEADLINE_BUFFER_MS = 5000;
 // 视觉模型通常需要先完成图片编码/理解，再开始生成。不能因为配置了多个
 // fallback 就把 active 的首次请求预切成十几秒；总 deadline 仍是硬上限。
-const MIN_VISION_ATTEMPT_TIMEOUT_MS = 60_000;
+// 2026-08-20 生产实测：视觉单次成功延迟 28–56s，晚高峰（SiliconFlow 排队）
+// 可达 ~103s。60s 下限会把仍在正常生成的请求中途杀掉再从头排队（重试丢掉
+// 已生成的 token，等于西西弗斯），因此下限提高到 120s；剩余预算不足时仍按
+// 剩余 deadline 截断。
+const MIN_VISION_ATTEMPT_TIMEOUT_MS = 120_000;
 
 const RETRYABLE_STATUS_CODES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 // 这些状态不适合在同一实例上重复请求，但切换到用户配置的另一实例仍有意义：
@@ -493,6 +502,7 @@ export class OpenAIProvider implements AIService {
 
             logger.box('📤 API Request (发送给 AI 的原始请求)', JSON.stringify(requestParamsForLog, null, 2));
 
+            const requestStartedAt = Date.now();
             const response = await this.withTransientRetry('image analysis', async (context, requestOptions) => {
                 if (context.isLongCat) {
                     // LongCat 使用不同的多模态格式，绕过 SDK 直接请求
@@ -562,6 +572,15 @@ export class OpenAIProvider implements AIService {
                 };
                 return await context.client.chat.completions.create(params, requestOptions) as CompletionResponseLike;
             }, this.visionClientContexts, MIN_VISION_ATTEMPT_TIMEOUT_MS);
+
+            // 耗时与 token 用量是诊断"分析慢"的关键观测量：解码时长 ≈
+            // completion_tokens / 模型解码速度，重试浪费则体现在 durationMs 偏大
+            // 而 completion_tokens 正常。
+            logger.info({
+                durationMs: Date.now() - requestStartedAt,
+                promptTokens: response.usage?.prompt_tokens,
+                completionTokens: response.usage?.completion_tokens,
+            }, 'AI image analysis completed');
 
             logger.box('📦 Full API Response', JSON.stringify(response, null, 2));
 

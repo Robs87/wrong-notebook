@@ -356,8 +356,36 @@ describe('OpenAI Provider 错误处理', () => {
         await provider.analyzeImage('base64data');
 
         const firstRequestOptions = mockCompletionCreate.mock.calls[0]?.[1] as { timeout?: number } | undefined;
-        // SiliconFlow 等视觉模型需要完整的单请求窗口；不能因为候选尚未发生就只给约 17 秒。
-        expect(firstRequestOptions?.timeout).toBeGreaterThanOrEqual(60_000);
+        // SiliconFlow 等视觉模型的实测单次延迟可达 ~103s（晚高峰）；
+        // 不能因为候选尚未发生就只给约 17 秒。
+        expect(firstRequestOptions?.timeout).toBeGreaterThanOrEqual(120_000);
+    });
+
+    it('视觉请求快速失败后的重试也应保留完整单请求窗口', async () => {
+        provider = new OpenAIProvider(
+            { apiKey: 'primary-key', baseUrl: 'https://api.openai.com/v1', model: 'vision-primary', name: 'primary' },
+            [],
+            [
+                { apiKey: 'fallback-1', baseUrl: 'https://api.openai.com/v1', model: 'vision-1', name: 'vision-1' },
+                { apiKey: 'fallback-2', baseUrl: 'https://api.openai.com/v1', model: 'vision-2', name: 'vision-2' },
+            ],
+        );
+        mockCompletionCreate
+            .mockRejectedValueOnce(new Error('Connection error.'))
+            .mockResolvedValueOnce({
+                choices: [{
+                    message: {
+                        content: '<question_text>Q</question_text><answer_text>A</answer_text><analysis>An</analysis><subject>数学</subject>',
+                    },
+                }],
+            });
+
+        await provider.analyzeImage('base64data');
+
+        const retryRequestOptions = mockCompletionCreate.mock.calls[1]?.[1] as { timeout?: number } | undefined;
+        // 连接错误在毫秒级失败，此时重试等价于一次全新请求，
+        // 也需要完整的视觉窗口，而不是被公平份额压回几十秒。
+        expect(retryRequestOptions?.timeout).toBeGreaterThanOrEqual(120_000);
     });
 
     it('主实例重试耗尽后应切换到备用实例', async () => {
